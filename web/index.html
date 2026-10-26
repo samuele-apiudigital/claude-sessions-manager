@@ -29,6 +29,7 @@
         <div class="tk-inbox">
           <span class="tk-scan" id="tkScanInfo"></span>
           <label class="tk-auto" title="scan the inbox automatically while cs runs"><input type="checkbox" id="tkAuto"> auto every <select id="tkEvery" aria-label="Minutes between scans"><option value="5">5</option><option value="10">10</option><option value="15">15</option><option value="30">30</option><option value="60">60</option></select> min</label>
+          <label class="tk-auto" title="where analyze and resume open the Claude session">sessions in <select id="tkTerm" aria-label="Terminal for task sessions"></select></label>
           <button type="button" class="tk-btn" id="tkMail">inbox log</button>
           <button type="button" class="tk-btn" id="tkScan">scan inbox</button>
         </div>
@@ -462,6 +463,9 @@ function renderInbox() {
     if (![...ev.options].some(o => o.value === String(ib.every))) ev.add(new Option(String(ib.every), String(ib.every)));
     if (document.activeElement !== ev) ev.value = String(ib.every);
   }
+  const tm = $("tkTerm"), term = S.cfg.terminal || { app: "Terminal", list: ["Terminal"] };
+  if (tm.options.length !== term.list.length) tm.replaceChildren(...term.list.map(n => new Option(n, n)));
+  if (document.activeElement !== tm) tm.value = term.app;
   $("tkMail").classList.toggle("on", mailOpen);
   $("tkMailBox").hidden = !mailOpen;
   if (!mailOpen) return;
@@ -600,7 +604,7 @@ function renderDetail() {
 function sessHTML(t, sess) {
   let line, acts;
   if (!t.session_id) {
-    line = t.repo ? `No Claude session yet. Analyze opens one in a Terminal tab, in plan mode, in ${esc(home(t.repo))}.`
+    line = t.repo ? `No Claude session yet. Analyze opens one in ${esc(S.cfg.terminal?.app || "Terminal")}, in plan mode, in ${esc(home(t.repo))}.`
       : `Set the task's repo (edit, then pick client/repo) to analyze it.`;
     acts = `<button type="button" class="tk-btn primary" data-act="analyze"${t.repo ? "" : " disabled"}>analyze</button>`;
   } else if (sess) {
@@ -610,7 +614,7 @@ function sessHTML(t, sess) {
       : `<span class="tk-you">○ session ${esc(t.session_id.slice(0, 8))} is waiting for you</span>`;
     acts = `<button type="button" class="tk-btn primary" data-act="focus">focus session</button>`;
   } else if (t.status === "analyzing" && nowS() - t.updated < 90) {
-    line = `<span class="o"><span data-spin="0">${SPIN[FRAME % 10]}</span> starting session ${esc(t.session_id.slice(0, 8))} in Terminal…</span>`;
+    line = `<span class="o"><span data-spin="0">${SPIN[FRAME % 10]}</span> starting session ${esc(t.session_id.slice(0, 8))} in ${esc(S.cfg.terminal?.app || "Terminal")}…</span>`;
     acts = "";
   } else {
     line = `<span class="dim">session ${esc(t.session_id.slice(0, 8))} has ended</span>`;
@@ -625,7 +629,8 @@ async function taskSession(resume) {
   if (!t) return;
   try {
     tkCur = await api("/api/task/session", { id: t.id, resume });
-    flash = [resume ? `resumed #${t.id}'s session in Terminal` : `#${t.id}: Claude is analyzing it in a new Terminal tab`, Date.now()];
+    const app = S.cfg.terminal?.app || "Terminal";
+    flash = [resume ? `resumed #${t.id}'s session in ${app}` : `#${t.id}: Claude is analyzing it in ${app}`, Date.now()];
   } catch (e) {
     flash = [`could not start the session: ${e.message}`, Date.now()];
   }
@@ -1024,6 +1029,11 @@ async function inboxSet(body) {
 }
 $("tkAuto").addEventListener("change", e => inboxSet({ auto: e.target.checked }));
 $("tkEvery").addEventListener("change", e => inboxSet({ every: Number(e.target.value) }));
+$("tkTerm").addEventListener("change", async e => {
+  try { await api("/api/terminal", { app: e.target.value }); flash = [`task sessions now open in ${e.target.value}`, Date.now()]; }
+  catch (err) { flash = [`could not save: ${err.message}`, Date.now()]; }
+  await poll();
+});
 $("tkDismiss").addEventListener("click", async () => {
   const id = tkCur?.id;
   if (id && await tkUpdate({ dismiss: true })) flash = [`#${id} is not a task: rejected, and later scans learn from it`, Date.now()];

@@ -1046,12 +1046,31 @@ How to work on it:
 5. When you are done, write a short report: what changed, the branch and worktree path, the test results, and how I can verify it. End that last message with exactly this line:
 [task #{t['id']} ready for review]"""
 
-def terminal_run(script, title):
+TERMINALS = ("Terminal", "iTerm", "Warp", "Ghostty", "kitty", "Alacritty", "WezTerm")
+
+def terminals():
+    dirs = ("/System/Applications/Utilities", "/Applications/Utilities", "/Applications", os.path.expanduser("~/Applications"))
+    return [n for n in TERMINALS if any(os.path.isdir(f"{d}/{n}.app") for d in dirs)]
+
+def task_terminal():
+    app, found = settings().get("terminal"), terminals()
+    return app if app in found else "Terminal"
+
+def terminal_run(script, title, app):
     q = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
-    osa = (f'tell application "Terminal"\nactivate\nset t to do script "sh {q(shlex_quote(script))}"\n'
-        f'set custom title of t to "{q(title)}"\nend tell')
-    r = _run(["osascript", "-e", osa], capture_output=True, text=True, timeout=15)
-    return None if r.returncode == 0 else (r.stderr or "").strip()[:200] or "osascript failed"
+    if app == "Terminal":
+        r = _run(["osascript", "-e", f'tell application "Terminal"\nactivate\nset t to do script "sh {q(shlex_quote(script))}"\n'
+            f'set custom title of t to "{q(title)}"\nend tell'], capture_output=True, text=True, timeout=15)
+    elif app == "iTerm":
+        r = _run(["osascript", "-e", f'tell application "iTerm"\nactivate\ncreate window with default profile command "sh {q(shlex_quote(script))}"\nend tell'],
+            capture_output=True, text=True, timeout=15)
+    elif app == "Warp":
+        # Warp has no AppleScript, but it runs a .command file it is asked to open
+        r = _run(["open", "-a", "Warp", script], capture_output=True, text=True, timeout=15)
+    else:
+        argv = dict(Ghostty=["-e", "sh", script], Alacritty=["-e", "sh", script], kitty=["sh", script], WezTerm=["start", "--", "sh", script])[app]
+        r = _run(["open", "-na", app, "--args"] + argv, capture_output=True, text=True, timeout=15)
+    return None if r.returncode == 0 else (r.stderr or "").strip()[:200] or f"{app} did not start"
 
 def shlex_quote(x):
     import shlex
@@ -1072,19 +1091,21 @@ def task_session(tid, resume=False):
         sid, pf = str(uuid.uuid4()), f"{TASK_DIR}/task-{t['id']}-prompt.md"
         with open(pf, "w", encoding="utf-8") as f: f.write(task_prompt(t, branch))
         run = f'exec {shlex_quote(claude)} --permission-mode plan --session-id {sid} "$(cat {shlex_quote(pf)})"'
-    sh = f"{TASK_DIR}/task-{t['id']}.sh"
+    sh = f"{TASK_DIR}/task-{t['id']}.command"
     with open(sh, "w", encoding="utf-8") as f: f.write(f"#!/bin/sh\ncd {shlex_quote(t['repo'])} || exit 1\n{run}\n")
-    err = terminal_run(sh, f"task #{t['id']} · {t['title'][:40]}")
-    if err: return None, f"could not open Terminal: {err}"
+    os.chmod(sh, 0o755)
+    app = task_terminal()
+    err = terminal_run(sh, f"task #{t['id']} · {t['title'][:40]}", app)
+    if err: return None, f"could not open {app}: {err}"
     now = time.time()
     def save(c):
         if resume:
-            task_event(c, tid, "session", f"resumed session {sid[:8]} in Terminal", now)
+            task_event(c, tid, "session", f"resumed session {sid[:8]} in {app}", now)
             c.execute("UPDATE tasks SET updated = ? WHERE id = ?", (now, tid))
             return
         c.execute("UPDATE tasks SET session_id = ?, branch = ?, status = 'analyzing', result = NULL, report = NULL, updated = ? WHERE id = ?",
             (sid, branch, now, tid))
-        task_event(c, tid, "session", f"analysis started in Terminal, session {sid[:8]}; once approved it works on {branch}", now)
+        task_event(c, tid, "session", f"analysis started in {app}, session {sid[:8]}; once approved it works on {branch}", now)
         if t["status"] != "analyzing": task_event(c, tid, "status", f"{t['status']} → analyzing", now)
     task_q(save)
     return task_get(tid), None
@@ -1136,7 +1157,7 @@ def task_sync(live):
                 (new, plan, report, now, r["id"]))
             if new == r["status"]: return
             task_event(c, r["id"], "status", f"{r['status']} → {new}", now)
-            note = dict(awaiting_approval="Claude posted its plan: approve it or comment in the session's Terminal tab",
+            note = dict(awaiting_approval="Claude posted its plan: approve it or comment in the session's terminal",
                 implementing="plan approved: Claude is implementing it on the task branch",
                 in_review="Claude finished: review its report and the branch",
                 failed="the session ended before posting a plan: analyze again, or resume the session").get(new)
@@ -1357,7 +1378,7 @@ def server(port):
                 rows = sessions(q.get("all") == ["1"], q.get("fresh") == ["1"])
                 _, lst, cur = themes()
                 return self.reply(200, dict(sessions=rows, usage=usage_data(), chat=chat_state(), now=time.time(), projects=projects(), tasks=tasks_state(),
-                    cfg=dict(themes=lst, theme=cur["id"], projects=dict(dir=str(settings().get("projects") or "~/Projects"), env=bool(os.environ.get("CS_REPO_ROOTS"))), window=WINDOW, agent_rows=AGENT_ROWS, chat_rows=CHAT_ROWS, chat_model=CHAT_MODEL, home=os.path.expanduser("~"))))
+                    cfg=dict(themes=lst, theme=cur["id"], projects=dict(dir=str(settings().get("projects") or "~/Projects"), env=bool(os.environ.get("CS_REPO_ROOTS"))), window=WINDOW, agent_rows=AGENT_ROWS, chat_rows=CHAT_ROWS, chat_model=CHAT_MODEL, terminal=dict(app=task_terminal(), list=terminals()), home=os.path.expanduser("~"))))
             if u.path == "/api/task":
                 tid = (parse_qs(u.query).get("id") or [""])[0]
                 if not tid.isdigit(): return self.reply(400, {"error": "bad id"})
@@ -1397,6 +1418,11 @@ def server(port):
                 try: save_settings(projects=d)
                 except OSError as e: return self.reply(500, {"error": f"cannot write {SETTINGS}: {e.strerror}"})
                 return self.reply(200, {"projects": d})
+            if u.path == "/api/terminal":
+                if body.get("app") not in terminals(): return self.reply(400, {"error": "terminal not installed"})
+                try: save_settings(terminal=body["app"])
+                except OSError as e: return self.reply(500, {"error": f"cannot write {SETTINGS}: {e.strerror}"})
+                return self.reply(200, {"terminal": body["app"]})
             if u.path == "/api/chat":
                 text = str(body.get("text") or "").strip()
                 if text: chat_send(text, sessions(False))

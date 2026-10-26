@@ -113,7 +113,7 @@ Tasks live in `~/.claude/state/cs-tasks.db` (SQLite, or `$CS_TASKS_DB`).
 
 ### Working a task with Claude
 
-`analyze` in a task's detail opens a new Terminal tab running an interactive `claude` session in the
+`analyze` in a task's detail opens a new terminal tab or window running an interactive `claude` session in the
 task's repo, in plan mode, with the task (and its email, marked as third-party data) as the first prompt.
 It shows up in the sessions view like any other session, its tile tagged `task #N`, and `focus session`
 brings its tab forward. The task follows the session by reading its transcript:
@@ -129,8 +129,13 @@ brings its tab forward. The task follows the session by reading its transcript:
 Rejecting or commenting on the plan sends the task back to analyzing until the next plan. The detail shows
 the plan, the final report, and the branch's worktree, commits and diff stat; `open in VS Code` opens the
 worktree once it exists. Nothing is pushed, merged or deployed and no email is sent: you review the branch
-and merge it yourself, then mark the task done. `resume session` reopens an ended session in Terminal;
+and merge it yourself, then mark the task done. `resume session` reopens an ended session in the chosen terminal;
 `analyze again` starts a new one. The first `analyze` asks macOS to let the dashboard control Terminal.
+
+`sessions in` in the Tasks bar picks the terminal for these sessions, from the ones installed (Terminal,
+iTerm, Warp, Ghostty, kitty, Alacritty, WezTerm); it is saved as `terminal` in `.settings.json` and
+defaults to Terminal. Warp gets the session's script as a `.command` file to run; only Terminal and
+iTerm can select the exact tab on `focus session`, the others are brought to the front.
 
 ### Tasks from email
 
