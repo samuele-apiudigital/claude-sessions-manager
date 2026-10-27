@@ -130,6 +130,16 @@ let projSel = 0, projSig = "";
 let tab = ["tasks", "tx"].includes(store.get("cs.tab")) ? store.get("cs.tab") : "sessions";
 let tkShow = store.get("cs.tkshow") === "all" ? "all" : "open";
 let tkSel = null, tkCur = null, tkLoading = null, tkMode = null, tkSig = "", tkInfoSig = "", tkDlSig = "";
+let txSizes = {};
+try { txSizes = JSON.parse(store.get("cs.txsize") || "{}") || {}; } catch {}
+const TX_SIZES = ["1x1", "2x1", "2x2"];
+// a 2×2 grid with the cells the size covers filled in
+const txIcon = z => {
+  const [w, h] = z.split("x").map(Number);
+  let r = "";
+  for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) r += `<rect x="${1 + x * 7}" y="${1 + y * 7}" width="5" height="5" rx="1"${x < w && y < h ? ` class="on"` : ""}/>`;
+  return `<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">${r}</svg>`;
+};
 let mailOpen = false, mailData = null, mailKey = "", mailSig = "", scanSig = "";
 
 const TS = {
@@ -356,6 +366,7 @@ function renderTx() {
   if ($("txDirs")._sig !== dsig) { $("txDirs").replaceChildren(...dirs.map(d => new Option(home(d), home(d)))); $("txDirs")._sig = dsig; }
   const rows = S.sessions.filter(r => r.tx);
   const old = new Map([...box.children].map(el => [el.dataset.sid, el]));
+  const cols = getComputedStyle(box).gridTemplateColumns.split(" ").filter(Boolean).length;
   let prev = null;
   for (const r of rows) {
     let el = old.get(r.sid);
@@ -366,10 +377,14 @@ function renderTx() {
       el.innerHTML = `<div class="chat-head"><span class="chat-title"></span><span class="chat-side"></span></div><div class="chat-log"></div>`
         + `<div class="tx-ask" hidden></div>`
         + `<div class="chat-field"><span class="p">❯</span><input class="tx-input" autocomplete="off" spellcheck="false">`
+        + `<span class="tx-size" role="group" aria-label="Box size">${TX_SIZES.map(z => `<button type="button" data-size="${z}" title="${z.replace("x", "×")} (columns × rows)" aria-label="size ${z.replace("x", " by ")}">${txIcon(z)}</button>`).join("")}</span>`
         + `<button type="button" class="tk-btn" data-act="stop"></button><button type="button" class="tk-btn" data-act="focus">focus</button></div>`;
     }
     const [label, cls] = stateOf(r), t = r.tx;
-    el.className = `chat txbox ${cls}${r.sid === sel ? " sel" : ""}${el.contains(document.activeElement) ? " on" : ""}`;
+    const size = txSizes[r.sid] || "1x1";
+    el.className = `chat txbox ${cls}${r.sid === sel ? " sel" : ""}${el.contains(document.activeElement) ? " on" : ""}`
+      + (size !== "1x1" && cols > 1 ? " w2" : "") + (size === "2x2" ? " h2" : "");
+    for (const b of el.querySelectorAll("[data-size]")) b.setAttribute("aria-pressed", String(b.dataset.size === size));
     const tk = (S.tasks?.list || []).find(x => x.session_id === r.sid);
     const title = (tk ? `task #${tk.id} · ` : "") + (r.name || r.sid.slice(0, 8));
     const side = `${label.toLowerCase()} · ${String(r.cwd).replace(/\/+$/, "").split("/").pop()}${t.app ? ` · ${t.app}` : ""}`;
@@ -407,6 +422,13 @@ function renderTx() {
     prev = el;
   }
   for (const el of old.values()) el.remove();
+}
+
+function txResize(sid, size) {
+  if (size === "1x1") delete txSizes[sid]; else txSizes[sid] = size;
+  store.set("cs.txsize", JSON.stringify(txSizes));
+  render();
+  document.querySelector(`.txbox[data-sid="${CSS.escape(sid)}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
 async function txAct(path, body) {
@@ -838,7 +860,7 @@ function renderHint() {
     : document.activeElement?.closest?.("#tkForm") ? "enter saves (⌘/ctrl-enter in the description) · esc cancels"
     : document.activeElement === $("tkNote") ? "enter saves the note · esc leaves"
     : document.activeElement?.classList?.contains("tx-input") ? "enter send · esc leave · ctrl-u clear line"
-    : tab === "tx" ? `1 sessions · 2 tasks · ←↑↓→ select · enter type · n new session · f focus · a ${showAll ? "hide ended" : "show ended"} · / chat · r refresh`
+    : tab === "tx" ? `1 sessions · 2 tasks · ←↑↓→ select · enter type · n new session · s size · f focus · a ${showAll ? "hide ended" : "show ended"} · / chat · r refresh`
     : tab === "tasks" ? `1 sessions · ↑↓ select · n new task · e edit · esc close · a ${tkShow === "all" ? "open only" : "show all"} · s scan inbox · m inbox log · / chat · r refresh`
     : `←↑↓→ select · enter/click focus · 2 tasks · 3 transcripts · / chat · p projects · a ${showAll ? "hide ended" : "show ended"} · t ${view === "tiles" ? "table" : "tiles"} · r refresh${installPrompt ? " · i install app" : ""}`;
   let h = esc(keys);
@@ -971,6 +993,7 @@ document.addEventListener("keydown", e => {
     if (k === "Enter") { e.preventDefault(); document.querySelector(`.txbox[data-sid="${CSS.escape(sel || "")}"] input`)?.focus(); return; }
     if (k === "f" || k === "F") { e.preventDefault(); focusSel(); return; }
     if (k === "n" || k === "N") { e.preventDefault(); $("txNew").elements.cwd.focus(); return; }
+    if ((k === "s" || k === "S") && sel) { e.preventDefault(); txResize(sel, TX_SIZES[(TX_SIZES.indexOf(txSizes[sel] || "1x1") + 1) % TX_SIZES.length]); return; }
     if (k === " " || k === "t" || k === "T") return;
   }
   if (tab === "tasks") {
@@ -1062,8 +1085,9 @@ $("txs").addEventListener("click", e => {
   const el = e.target.closest(".txbox");
   if (!el) return;
   sel = el.dataset.sid;
-  const act = e.target.closest("[data-act]")?.dataset.act;
-  if (act === "focus") focusSel();
+  const act = e.target.closest("[data-act]")?.dataset.act, size = e.target.closest("[data-size]")?.dataset.size;
+  if (size) txResize(sel, size);
+  else if (act === "focus") focusSel();
   else if (act === "allow" || act === "deny") txAct("/api/session/answer", { sid: sel, allow: act === "allow" });
   else if (act === "stop") txAct("/api/session/stop", { sid: sel });
   else render();
@@ -1087,6 +1111,7 @@ $("txs").addEventListener("scroll", e => {
   const lg = e.target;
   if (lg.classList?.contains("chat-log") && Date.now() - (lg._userT || 0) < 1000) lg._up = lg.scrollHeight - lg.scrollTop - lg.clientHeight > 8;
 }, true);
+addEventListener("resize", () => { if (tab === "tx") render(); });
 $("txs").addEventListener("keydown", e => {
   const inp = e.target.closest(".tx-input");
   if (!inp) return;

@@ -33,7 +33,8 @@ SETTINGS = os.path.join(ROOT, ".settings.json")
 SLOCK = threading.Lock()
 CHAT, CHAT_SID, CHAT_PROC, INPUT, CHAT_T0 = [], None, None, None, 0.0
 PROJ, PSEARCH, PSEL, PROJ_HITS, PROJ_Y = [], None, 0, [], 0
-VIEW, SEND, TXD, TX_ROOM, TX_LINES, PNEW = "tiles", None, {}, 20, {}, False
+VIEW, SEND, TXD, TX_ROOM, TX_LINES, PNEW, TX_SIZE = "tiles", None, {}, 20, {}, False, {}
+TX_SIZES = ((1, 1), (2, 1), (2, 2))
 WEB_URL, WEB_HIT, WEB_LABEL = None, None, "open web view ↗"
 CHAT_LOCK = threading.Lock()
 INBOX, INBOX_LOCK = dict(proc=None, t0=0.0, trigger=""), threading.Lock()
@@ -411,22 +412,43 @@ def render(rows):
     if VIEW == "tx":
         per = max(1, (cols - 1) // 64)
         W = (cols - 1 - (per - 1)) // per
-        nrow, fit = max(1, -(-len(rows) // per)), max(1, TX_ROOM // 10)
-        show = min(nrow, fit)
+        # dense packing: each box takes the first free w×h spot from the top, so smaller boxes fill the gaps
+        grid, place = [], []
+        for r in rows:
+            w, h = TX_SIZE.get(r["sid"], (1, 1))
+            w, y = min(w, per), 0
+            while True:
+                while len(grid) < y + h: grid.append([None] * per)
+                x = next((x for x in range(per - w + 1) if all(grid[y + i][x + j] is None for i in range(h) for j in range(w))), None)
+                if x is not None: break
+                y += 1
+            for i in range(h):
+                for j in range(w): grid[y + i][x + j] = len(place)
+            place.append((r, x, y, w, h))
+        nrow = max(1, len(grid))
+        show = min(nrow, max(1, TX_ROOM // 10))
         bh = max(8, TX_ROOM // show)
-        # more rows than fit: scroll so the selected box's row is on screen
-        at = next((k // per for k, r in enumerate(rows) if r["sid"] == SEL), 0)
-        first = min(max(0, at - show + 1), nrow - show)
+        # more rows than fit: scroll so the selected box is on screen
+        sp = next((q for q in place if q[0]["sid"] == SEL), None)
+        first = min(max(0, sp[2] + sp[4] - show), sp[2], nrow - show) if sp else 0
         TILES.clear()
         y0 = 3
-        if first or first + show < nrow: print(f"{D} rows {first + 1}–{first + show} of {nrow} · ↑↓ scroll{Z}"); y0 += 1
-        for i in range(first * per, (first + show) * per, per):
-            chunk = rows[i:i + per]
-            for j, r in enumerate(chunk):
-                x0 = j * (W + 1) + 1
-                TILES.append(dict(sid=r["sid"], idx=i + j, x0=x0, x1=x0 + W - 1, y0=y0, y1=y0 + bh - 1))
-            y0 += bh
-            for ln in zip(*(tx_box(r, W, bh) for r in chunk)): print(" ".join(ln))
+        if show < nrow: print(f"{D} rows {first + 1}–{first + show} of {nrow} · arrows scroll{Z}"); y0 += 1
+        boxes = {}
+        for k, (r, x, y, w, h) in enumerate(place):
+            if y + h > first and y < first + show:
+                x0 = x * (W + 1) + 1
+                TILES.append(dict(sid=r["sid"], idx=k, x0=x0, x1=x0 + w * (W + 1) - 2, y0=y0 + (y - first) * bh, y1=y0 + (y - first + h) * bh - 1))
+                boxes[k] = tx_box(r, w * (W + 1) - 1, h * bh)
+        for L in range(first * bh, (first + show) * bh):
+            gy, off = divmod(L, bh)
+            out, c = [], 0
+            while c < per:
+                k = grid[gy][c]
+                if k is None: out.append(" " * W); c += 1; continue
+                _, x, y, w, h = place[k]
+                out.append(boxes[k][(gy - y) * bh + off]); c += w
+            print(" ".join(out))
         if not rows: print(f"{D} no sessions{Z}")
         return
 
@@ -1822,7 +1844,7 @@ else:
                 elif PSEARCH is not None:
                     hint = "\033[2m type to filter · ←→ select · enter " + ("start a session there" if PNEW else "open in VS Code") + " · esc close \033[0m"
                 elif INPUT is None and VIEW == "tx":
-                    hint = "\033[2m ←↑↓→ select · enter/click type · n new · y/d answer · x stop · f focus · v tiles · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
+                    hint = "\033[2m ←↑↓→ select · enter/click type · n new · s size · y/d answer · x stop · f focus · v tiles · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 elif INPUT is None:
                     hint = "\033[2m ←↑↓→ select · enter/click focus · v transcripts · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 else:
@@ -1940,6 +1962,9 @@ else:
                         elif k in ("a", "A"): show_all = not show_all; last = 0
                         elif k in ("v", "V"): VIEW, last = "tiles" if VIEW == "tx" else "tx", 0
                         elif k in ("n", "N") and VIEW == "tx": PSEARCH, PSEL, PNEW = "", 0, True
+                        elif k in ("s", "S") and VIEW == "tx" and SEL:
+                            TX_SIZE[SEL] = TX_SIZES[(TX_SIZES.index(TX_SIZE.get(SEL, (1, 1))) + 1) % len(TX_SIZES)]
+                            MSG = (f"box size {'×'.join(map(str, TX_SIZE[SEL]))} (columns × rows)", time.time())
                         elif k in ("y", "Y", "d", "D", "x", "X") and VIEW == "tx":
                             if not SEL: MSG = ("select a session with the arrow keys first", time.time())
                             elif k in "xX": MSG, last = (own_stop(SEL), time.time()), 0

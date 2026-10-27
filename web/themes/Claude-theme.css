@@ -440,9 +440,11 @@ kbd { font: inherit; color: var(--fg); }
 .tk-code { font: 12.5px/1.6 var(--mono); max-height: 30vh; }
 
 /* transcripts: one chat box per session, built from the .chat styles above */
-.txs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 26px 14px; padding-top: 12px; }
+.txs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); grid-auto-rows: min(70vh, 480px); grid-auto-flow: row dense; gap: 26px 14px; padding-top: 12px; }
 .tx-view[hidden] { display: none; }
-.txbox { display: flex; flex-direction: column; height: min(70vh, 480px); margin-top: 0; min-width: 0; }
+.txbox { display: flex; flex-direction: column; min-height: 0; margin-top: 0; min-width: 0; }
+.txbox.w2 { grid-column: span 2; }
+.txbox.h2 { grid-row: span 2; }
 .txbox .chat-log { flex: 1; min-height: 0; overflow-x: hidden; overflow-wrap: anywhere; overflow-anchor: none; }
 .txbox.sel { border-color: var(--orange); }
 .txbox.s-ended .chat-title { color: var(--dim); }
@@ -457,3 +459,10 @@ kbd { font: inherit; color: var(--fg); }
 .tx-ask[hidden] { display: none; }
 .tx-ask-q { overflow-wrap: anywhere; }
 .tx-plan { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .92em; color: var(--fg); border-left: 2px solid var(--orange); padding-left: 8px; }
+.tx-size { display: inline-flex; gap: 2px; flex: none; }
+.tx-size button { display: grid; place-items: center; padding: 3px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
+.tx-size button:hover { color: var(--fg); }
+.tx-size button[aria-pressed=true] { color: var(--orange); border-color: var(--gray); }
+.tx-size button:focus-visible { outline: 1px solid var(--orange); outline-offset: 1px; }
+.tx-size rect { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-opacity: .4; }
+.tx-size rect.on { fill: currentColor; stroke-opacity: 1; }
