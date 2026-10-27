@@ -130,9 +130,10 @@ let projSel = 0, projSig = "";
 let tab = ["tasks", "tx"].includes(store.get("cs.tab")) ? store.get("cs.tab") : "sessions";
 let tkShow = store.get("cs.tkshow") === "all" ? "all" : "open";
 let tkSel = null, tkCur = null, tkLoading = null, tkMode = null, tkSig = "", tkInfoSig = "", tkDlSig = "";
-let txSizes = {};
+let txSizes = {}, txScrollTo = null;
 try { txSizes = JSON.parse(store.get("cs.txsize") || "{}") || {}; } catch {}
 const TX_SIZES = ["1x1", "2x1", "2x2"];
+const CHAT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3.5 2.5v-2.5H2.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path d="M4.5 5.5h7M4.5 8h4.5"/></svg>`;
 // a 2×2 grid with the cells the size covers filled in
 const txIcon = z => {
   const [w, h] = z.split("x").map(Number);
@@ -264,7 +265,8 @@ function tileHTML(r) {
     + `<b style="color:var(--bc)">${pct.toFixed(0)}%</b></div><div class="bar"><i style="width:${pct.toFixed(2)}%"></i></div></div>`
     + `<div class="meta"><div><span class="dim">MODEL</span> ${esc(String(r.model).replace("claude-", ""))}</div>`
     + `<div class="pairs">${pair("turns", r.turns, "tools", r.tools)}${pair("out", fmt(r.out), "cache", fmt(r.cread))}`
-    + `${pair("up", r.uptime, "idle", r.updated ? ago(r.updated) : "-")}</div></div></article>`;
+    + `${pair("up", r.uptime, "idle", r.updated ? ago(r.updated) : "-")}</div></div>`
+    + `<button type="button" class="tile-tx" data-tx title="open in transcripts, as a 2×2 box" aria-label="Open in transcripts">${CHAT_ICON}</button></article>`;
 }
 
 function tableHTML(rows) {
@@ -422,6 +424,9 @@ function renderTx() {
     prev = el;
   }
   for (const el of old.values()) el.remove();
+  // the box only exists once a poll with transcripts has come back
+  const want = txScrollTo && box.querySelector(`.txbox[data-sid="${CSS.escape(txScrollTo)}"]`);
+  if (want) { want.scrollIntoView({ block: "start" }); txScrollTo = null; }
 }
 
 function txResize(sid, size) {
@@ -1025,7 +1030,16 @@ ask.addEventListener("focus", render);
 ask.addEventListener("blur", render);
 $("chat").addEventListener("mousedown", e => { if (e.target !== ask) { e.preventDefault(); ask.focus(); } });
 
+function openTx(sid) {
+  txSizes[sid] = "2x2";
+  store.set("cs.txsize", JSON.stringify(txSizes));
+  sel = txScrollTo = sid;
+  setTab("tx");
+}
+
 function pick(e) {
+  const tx = e.target.closest("[data-tx]");
+  if (tx) { openTx(tx.closest("[data-sid]").dataset.sid); return; }
   const el = e.target.closest("[data-sid]");
   if (!el) return;
   sel = el.dataset.sid;

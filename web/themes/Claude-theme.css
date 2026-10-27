@@ -466,3 +466,7 @@ kbd { font: inherit; color: var(--fg); }
 .tx-size button:focus-visible { outline: 1px solid var(--orange); outline-offset: 1px; }
 .tx-size rect { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-opacity: .4; }
 .tx-size rect.on { fill: currentColor; stroke-opacity: 1; }
+.tile-tx { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; padding: 4px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
+.tile-tx:hover { color: var(--orange); border-color: var(--gray); }
+.tile-tx:focus-visible { outline: 1px solid var(--orange); outline-offset: 1px; }
+.tile-tx path { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
