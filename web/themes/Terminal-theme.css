@@ -202,11 +202,11 @@ b, .b { font-weight: 700; }
 .chat-field { display: flex; align-items: center; gap: 8px; }
 .chat-field .p { color: var(--gray); font-weight: 700; }
 .chat.on .chat-field .p { color: var(--orange); }
-#ask {
+#ask, .tx-input {
   flex: 1; min-width: 0; border: 0; outline: 0; padding: 2px 0;
   background: transparent; color: var(--fg); font: inherit; font-weight: 700; caret-color: var(--orange);
 }
-#ask::placeholder { color: var(--dim); font-weight: 400; }
+#ask::placeholder, .tx-input::placeholder { color: var(--dim); font-weight: 400; }
 .usage { margin-top: 8px; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .usage .sep { color: var(--dim); padding: 0 12px; }
 .hint { color: var(--dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -370,3 +370,22 @@ kbd { font: inherit; color: var(--fg); }
 .tk-sess .tk-acts { margin-top: 8px; }
 .tk-live { color: var(--orange); }
 .tk-code { max-height: 30vh; }
+
+/* transcripts: one chat box per session, built from the .chat styles above */
+.txs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 26px 14px; padding-top: 12px; }
+.tx-view[hidden] { display: none; }
+.txbox { display: flex; flex-direction: column; height: min(70vh, 480px); margin-top: 0; min-width: 0; }
+.txbox .chat-log { flex: 1; min-height: 0; overflow-x: hidden; overflow-wrap: anywhere; overflow-anchor: none; }
+.txbox.sel { border-color: var(--orange); }
+.txbox.s-ended .chat-title { color: var(--dim); }
+.tx-input:disabled { cursor: not-allowed; }
+.txbox .chat-field .tk-btn { flex: none; }
+.tx-new { flex-wrap: wrap; }
+.tx-new input, .tx-new select { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--gray); border-radius: 6px; padding: 3px 8px; min-width: 0; }
+.tx-new input[name=cwd] { width: 18em; }
+.tx-new .tx-first { flex: 1 1 14em; }
+.tx-new input:focus, .tx-new select:focus { outline: none; border-color: var(--orange); }
+.tx-ask { border-top: 1px dashed var(--orange); padding: 8px 0 6px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
+.tx-ask[hidden] { display: none; }
+.tx-ask-q { overflow-wrap: anywhere; }
+.tx-plan { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .92em; color: var(--fg); border-left: 2px solid var(--orange); padding-left: 8px; }

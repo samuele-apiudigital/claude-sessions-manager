@@ -16,11 +16,22 @@
 <body>
 <div class="app">
   <header class="top"><div class="top-info" id="head"><span class="brand">✻ Claude sessions</span></div>
-    <nav class="tabs" id="tabs" aria-label="View"><button type="button" data-tab="sessions">sessions</button><button type="button" data-tab="tasks">tasks <span class="tab-n" id="tabN"></span></button></nav>
+    <nav class="tabs" id="tabs" aria-label="View"><button type="button" data-tab="sessions">sessions</button><button type="button" data-tab="tasks">tasks <span class="tab-n" id="tabN"></span></button><button type="button" data-tab="tx">transcripts</button></nav>
     <label class="theme-pick"><span>theme</span><select id="theme" aria-label="Theme"></select></label></header>
   <main class="body" id="main">
     <div class="tiles" id="tiles"></div>
     <div class="tbl-wrap" id="table" hidden></div>
+    <section class="tx-view" id="txView" aria-label="Transcripts" hidden>
+      <form class="tk-bar tx-new" id="txNew" autocomplete="off">
+        <span class="dim">new session in</span>
+        <input name="cwd" list="txDirs" placeholder="project folder" spellcheck="false" aria-label="Project folder" required>
+        <select name="mode" aria-label="Permission mode"><option value="default">ask before tools</option><option value="plan">plan first</option><option value="acceptEdits">accept edits</option></select>
+        <input name="text" class="tx-first" placeholder="first message (optional)" spellcheck="false" aria-label="First message">
+        <button type="submit" class="tk-btn primary">start</button>
+        <datalist id="txDirs"></datalist>
+      </form>
+      <div class="txs" id="txs"></div>
+    </section>
     <section class="tasks" id="tasks" aria-label="Tasks" hidden>
       <div class="tk-bar">
         <button type="button" class="tk-btn primary" id="tkNew">+ new task</button>
@@ -116,7 +127,7 @@ let FRAME = 0;
 let lastPoll = 0, polling = false, chatSig = "";
 let themeSetAt = 0;
 let projSel = 0, projSig = "";
-let tab = store.get("cs.tab") === "tasks" ? "tasks" : "sessions";
+let tab = ["tasks", "tx"].includes(store.get("cs.tab")) ? store.get("cs.tab") : "sessions";
 let tkShow = store.get("cs.tkshow") === "all" ? "all" : "open";
 let tkSel = null, tkCur = null, tkLoading = null, tkMode = null, tkSig = "", tkInfoSig = "", tkDlSig = "";
 let mailOpen = false, mailData = null, mailKey = "", mailSig = "", scanSig = "";
@@ -307,10 +318,10 @@ function usageHTML(d) {
   return parts.join(sep) + sep + `<span class="dim">updated ${rem(now - (d.ts ?? now))} ago</span>`;
 }
 
-function chatHTML() {
+function msgsHTML(log) {
   const h = S.cfg.home;
   let out = "";
-  for (const [kind, text] of S.chat.log) {
+  for (const [kind, text] of log) {
     if (kind === "tool") {
       let cmd = String(text).split("\n")[0];
       if (h) cmd = cmd.split(h).join("~");
@@ -320,8 +331,95 @@ function chatHTML() {
       out += `<div class="msg ${kind === "you" || kind === "claude" ? kind : "err"}"><span class="g">${g}</span><span>${esc(one(text))}</span></div>`;
     }
   }
+  return out;
+}
+
+function chatHTML() {
+  let out = msgsHTML(S.chat.log);
   if (S.chat.working) out += `<div class="working"><span data-star>${STAR[FRAME % 10]}</span> Working… <span class="dim">${Math.max(0, Math.floor(nowS() - S.chat.t0))}s</span></div>`;
   return out;
+}
+
+function txPlaceholder(r) {
+  const t = r.tx;
+  if (t.pend) return "or type a reply: it denies with your message";
+  if (t.mode === "owned") return t.sending ? "working · enter queues a message" : "enter sends";
+  if (t.mode === "type") return `type to its ${t.app} tab · enter sends`;
+  if (t.mode === "resume") return "ended · enter resumes it in cs with your message";
+  return t.app ? `runs in ${t.app}: read-only here, focus it to type` : "no terminal: read-only";
+}
+
+function renderTx() {
+  const box = $("txs");
+  if (tab !== "tx") return;
+  const dirs = (S.projects || []).map(p => p.path), dsig = dirs.join("\n");
+  if ($("txDirs")._sig !== dsig) { $("txDirs").replaceChildren(...dirs.map(d => new Option(home(d), home(d)))); $("txDirs")._sig = dsig; }
+  const rows = S.sessions.filter(r => r.tx);
+  const old = new Map([...box.children].map(el => [el.dataset.sid, el]));
+  let prev = null;
+  for (const r of rows) {
+    let el = old.get(r.sid);
+    old.delete(r.sid);
+    if (!el) {
+      el = document.createElement("article");
+      el.dataset.sid = r.sid;
+      el.innerHTML = `<div class="chat-head"><span class="chat-title"></span><span class="chat-side"></span></div><div class="chat-log"></div>`
+        + `<div class="tx-ask" hidden></div>`
+        + `<div class="chat-field"><span class="p">❯</span><input class="tx-input" autocomplete="off" spellcheck="false">`
+        + `<button type="button" class="tk-btn" data-act="stop"></button><button type="button" class="tk-btn" data-act="focus">focus</button></div>`;
+    }
+    const [label, cls] = stateOf(r), t = r.tx;
+    el.className = `chat txbox ${cls}${r.sid === sel ? " sel" : ""}${el.contains(document.activeElement) ? " on" : ""}`;
+    const tk = (S.tasks?.list || []).find(x => x.session_id === r.sid);
+    const title = (tk ? `task #${tk.id} · ` : "") + (r.name || r.sid.slice(0, 8));
+    const side = `${label.toLowerCase()} · ${String(r.cwd).replace(/\/+$/, "").split("/").pop()}${t.app ? ` · ${t.app}` : ""}`;
+    const hd = el.querySelector(".chat-head");
+    if (hd._sig !== title + side) { hd.children[0].textContent = `✻ ${title}`; hd.children[1].textContent = side; hd.title = r.sid; hd._sig = title + side; }
+    const lg = el.querySelector(".chat-log");
+    const sig = JSON.stringify([t.log, t.sending, t.err, r.status]);
+    if (lg._sig !== sig) {
+      lg.innerHTML = msgsHTML(t.log)
+        + (t.sending || r.status === "busy" ? `<div class="working"><span data-spin="0">${SPIN[FRAME % 10]}</span> Working…</div>` : "")
+        + (t.err ? `<div class="msg err"><span class="g">✗</span><span>${esc(t.err)}</span></div>` : "");
+      lg._sig = sig;
+    }
+    const ask = el.querySelector(".tx-ask"), asig = JSON.stringify(t.pend);
+    if (ask._sig !== asig) {
+      ask.hidden = !t.pend;
+      ask.innerHTML = !t.pend ? "" : (t.pend.plan != null
+        ? `<div class="tx-ask-q"><b class="tk-you">◆ the plan waits for you</b></div><div class="tx-plan">${esc(t.pend.plan)}</div>`
+        : `<div class="tx-ask-q"><b class="tk-you">◆ allow ${esc(t.pend.tool)}?</b> <span class="dim">${esc(one(t.pend.what))}</span></div>`)
+        + `<div class="tk-acts"><button type="button" class="tk-btn primary" data-act="allow">${t.pend.plan != null ? "approve" : "allow"}</button><button type="button" class="tk-btn" data-act="deny">deny</button></div>`;
+      ask._sig = asig;
+    }
+    const inp = el.querySelector("input");
+    inp.disabled = t.mode === "none";
+    inp.placeholder = txPlaceholder(r);
+    inp.setAttribute("aria-label", `Message to ${title}`);
+    const stop = el.querySelector("[data-act=stop]");
+    stop.hidden = t.mode !== "owned";
+    stop.textContent = t.sending ? "stop" : "close";
+    stop.title = t.sending ? "interrupt the current turn" : "end this session (you can resume it later)";
+    el.querySelector("[data-act=focus]").hidden = !r.live || t.mode === "owned";
+    const want = prev ? prev.nextElementSibling : box.firstElementChild;
+    if (el !== want) box.insertBefore(el, want);
+    if (!lg._up) lg.scrollTop = lg.scrollHeight;
+    prev = el;
+  }
+  for (const el of old.values()) el.remove();
+}
+
+async function txAct(path, body) {
+  try { flash = [(await api(path, body)).msg, Date.now()]; }
+  catch (e) { flash = [`could not do that: ${e.message}`, Date.now()]; }
+  await poll(true);
+}
+
+async function txSend(sid, text) {
+  if (!text) return;
+  try { flash = [(await api("/api/session/send", { sid, text })).msg, Date.now()]; }
+  catch (e) { flash = [`could not send: ${e.message}`, Date.now()]; }
+  await poll(true);
 }
 
 function patch(box, items) {
@@ -464,7 +562,7 @@ function renderInbox() {
     if (document.activeElement !== ev) ev.value = String(ib.every);
   }
   const tm = $("tkTerm"), term = S.cfg.terminal || { app: "Terminal", list: ["Terminal"] };
-  if (tm.options.length !== term.list.length) tm.replaceChildren(...term.list.map(n => new Option(n, n)));
+  if (tm.options.length !== term.list.length) tm.replaceChildren(...term.list.map(n => new Option(n === "cs" ? "dashboard (cs)" : n, n)));
   if (document.activeElement !== tm) tm.value = term.app;
   $("tkMail").classList.toggle("on", mailOpen);
   $("tkMailBox").hidden = !mailOpen;
@@ -658,6 +756,7 @@ function setTab(t) {
   tab = t;
   store.set("cs.tab", t);
   render();
+  if (t === "tx") poll(true);
 }
 
 const F = n => $("tkForm").elements[n];
@@ -689,7 +788,7 @@ async function tkUpdate(fields) {
 }
 
 function render() {
-  const onT = tab === "tasks";
+  const onT = tab === "tasks", onX = tab === "tx";
   $("tabs").querySelectorAll("[data-tab]").forEach(b => { b.classList.toggle("on", b.dataset.tab === tab); b.setAttribute("aria-pressed", String(b.dataset.tab === tab)); });
   if (!S) { renderHint(); return; }
   const rows = S.sessions;
@@ -697,11 +796,13 @@ function render() {
   const empty = $("empty");
   empty.hidden = onT || rows.length > 0;
   if (!rows.length) empty.innerHTML = showAll ? `No sessions in the last 24h.` : `No live Claude sessions. Press <b>a</b> to include sessions ended in the last 24h.`;
-  $("tiles").hidden = onT || view !== "tiles";
-  $("table").hidden = onT || view !== "table";
+  $("tiles").hidden = onT || onX || view !== "tiles";
+  $("table").hidden = onT || onX || view !== "table";
   $("tasks").hidden = !onT;
-  $("note").hidden = onT;
-  if (!onT && view === "tiles") patch($("tiles"), rows.map(r => ({ key: r.sid, html: tileHTML(r) })));
+  $("txView").hidden = !onX;
+  $("note").hidden = onT || onX;
+  if (onX) renderTx();
+  else if (!onT && view === "tiles") patch($("tiles"), rows.map(r => ({ key: r.sid, html: tileHTML(r) })));
   else if (!onT) {
     const html = tableHTML(rows);
     if ($("table")._html !== html) { $("table").innerHTML = html; $("table")._html = html; }
@@ -736,8 +837,10 @@ function renderHint() {
     : document.activeElement === $("projQ") ? "type to filter · ↑↓ select · enter open in VS Code · esc close"
     : document.activeElement?.closest?.("#tkForm") ? "enter saves (⌘/ctrl-enter in the description) · esc cancels"
     : document.activeElement === $("tkNote") ? "enter saves the note · esc leaves"
+    : document.activeElement?.classList?.contains("tx-input") ? "enter send · esc leave · ctrl-u clear line"
+    : tab === "tx" ? `1 sessions · 2 tasks · ←↑↓→ select · enter type · n new session · f focus · a ${showAll ? "hide ended" : "show ended"} · / chat · r refresh`
     : tab === "tasks" ? `1 sessions · ↑↓ select · n new task · e edit · esc close · a ${tkShow === "all" ? "open only" : "show all"} · s scan inbox · m inbox log · / chat · r refresh`
-    : `←↑↓→ select · enter/click focus · 2 tasks · / chat · p projects · a ${showAll ? "hide ended" : "show ended"} · t ${view === "tiles" ? "table" : "tiles"} · r refresh${installPrompt ? " · i install app" : ""}`;
+    : `←↑↓→ select · enter/click focus · 2 tasks · 3 transcripts · / chat · p projects · a ${showAll ? "hide ended" : "show ended"} · t ${view === "tiles" ? "table" : "tiles"} · r refresh${installPrompt ? " · i install app" : ""}`;
   let h = esc(keys);
   if (flash[0] && Date.now() - flash[1] < 5000) h += `<span class="flash">▸ ${esc(flash[0])}</span>`;
   if (offline) h += `<span class="off">✗ server not reachable, retrying…</span>`;
@@ -816,7 +919,7 @@ async function poll(fresh) {
   polling = true;
   lastPoll = Date.now();
   try {
-    S = await api(`/api/state?all=${showAll ? 1 : 0}${fresh ? "&fresh=1" : ""}`);
+    S = await api(`/api/state?all=${showAll ? 1 : 0}${fresh ? "&fresh=1" : ""}${tab === "tx" ? "&tx=1" : ""}`);
     offline = false;
     syncThemes();
     if (sel && !S.sessions.some(r => r.sid === sel)) sel = null;
@@ -849,8 +952,8 @@ function move(key) {
   const ids = rows.map(r => r.sid);
   let cur = ids.indexOf(sel);
   let per = 1;
-  if (view === "tiles") {
-    const tiles = [...$("tiles").children];
+  if (tab === "tx" || view === "tiles") {
+    const tiles = [...$(tab === "tx" ? "txs" : "tiles").children];
     per = Math.max(1, tiles.filter(t => t.offsetTop === tiles[0].offsetTop).length);
   }
   const d = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: per, ArrowUp: -per }[key];
@@ -863,7 +966,13 @@ function move(key) {
 document.addEventListener("keydown", e => {
   if (e.target.closest?.("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
-  if (k === "1" || k === "2") { setTab(k === "1" ? "sessions" : "tasks"); return; }
+  if (k === "1" || k === "2" || k === "3") { setTab({ 1: "sessions", 2: "tasks", 3: "tx" }[k]); return; }
+  if (tab === "tx") {
+    if (k === "Enter") { e.preventDefault(); document.querySelector(`.txbox[data-sid="${CSS.escape(sel || "")}"] input`)?.focus(); return; }
+    if (k === "f" || k === "F") { e.preventDefault(); focusSel(); return; }
+    if (k === "n" || k === "N") { e.preventDefault(); $("txNew").elements.cwd.focus(); return; }
+    if (k === " " || k === "t" || k === "T") return;
+  }
   if (tab === "tasks") {
     if (k === "ArrowDown" || k === "ArrowUp") { e.preventDefault(); moveTask(k === "ArrowDown" ? 1 : -1); return; }
     if (k === "n" || k === "N") { e.preventDefault(); openForm("new"); return; }
@@ -949,6 +1058,44 @@ dirIn.addEventListener("keydown", async e => {
   renderHint();
 });
 
+$("txs").addEventListener("click", e => {
+  const el = e.target.closest(".txbox");
+  if (!el) return;
+  sel = el.dataset.sid;
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (act === "focus") focusSel();
+  else if (act === "allow" || act === "deny") txAct("/api/session/answer", { sid: sel, allow: act === "allow" });
+  else if (act === "stop") txAct("/api/session/stop", { sid: sel });
+  else render();
+});
+$("txNew").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = e.target.elements;
+  try {
+    const r = await api("/api/session/new", { cwd: f.cwd.value, mode: f.mode.value, text: f.text.value });
+    sel = r.sid;
+    f.text.value = "";
+    flash = [r.msg, Date.now()];
+  } catch (err) { flash = [`could not start: ${err.message}`, Date.now()]; }
+  await poll(true);
+  document.querySelector(`.txbox[data-sid="${CSS.escape(sel || "")}"] input`)?.focus();
+});
+// a box follows new messages until you scroll it up
+// (only scrolls right after your own wheel, touch or drag count: layout shifts fire scroll events too)
+for (const t of ["wheel", "touchmove", "pointerdown"]) $("txs").addEventListener(t, e => { const lg = e.target.closest?.(".chat-log"); if (lg) lg._userT = Date.now(); }, { capture: true, passive: true });
+$("txs").addEventListener("scroll", e => {
+  const lg = e.target;
+  if (lg.classList?.contains("chat-log") && Date.now() - (lg._userT || 0) < 1000) lg._up = lg.scrollHeight - lg.scrollTop - lg.clientHeight > 8;
+}, true);
+$("txs").addEventListener("keydown", e => {
+  const inp = e.target.closest(".tx-input");
+  if (!inp) return;
+  if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); const t = inp.value.trim(); inp.value = ""; txSend(inp.closest(".txbox").dataset.sid, t); }
+  else if (e.key === "Escape") { e.preventDefault(); inp.blur(); }
+  else if (e.ctrlKey && (e.key === "u" || e.key === "U")) { e.preventDefault(); inp.value = ""; }
+});
+$("txs").addEventListener("focusin", e => { const b = e.target.closest(".txbox"); if (b) { sel = b.dataset.sid; render(); } });
+$("txs").addEventListener("focusout", () => setTimeout(render));
 $("tabs").addEventListener("click", e => {
   const b = e.target.closest("[data-tab]");
   if (b) setTab(b.dataset.tab);

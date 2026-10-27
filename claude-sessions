@@ -33,6 +33,7 @@ SETTINGS = os.path.join(ROOT, ".settings.json")
 SLOCK = threading.Lock()
 CHAT, CHAT_SID, CHAT_PROC, INPUT, CHAT_T0 = [], None, None, None, 0.0
 PROJ, PSEARCH, PSEL, PROJ_HITS, PROJ_Y = [], None, 0, [], 0
+VIEW, SEND, TXD, TX_ROOM, TX_LINES, PNEW = "tiles", None, {}, 20, {}, False
 WEB_URL, WEB_HIT, WEB_LABEL = None, None, "open web view ↗"
 CHAT_LOCK = threading.Lock()
 INBOX, INBOX_LOCK = dict(proc=None, t0=0.0, trigger=""), threading.Lock()
@@ -366,6 +367,69 @@ def render(rows):
             + f"   {D}·  {fmt(sum(r['ctx'] for r in live))} context  ·  {fmt(sum(r['out'] for r in rows))} output  ·  {time.strftime('%H:%M:%S')}{Z}")
     print(head + "\n")
 
+    def tx_box(r, W, bh):
+        inner = W - 4
+        t = TXD.get(r["sid"]) or dict(log=[], mode="none", app=None, sending=False, err=None)
+        label, sc = state(r)
+        sel = r["sid"] == SEL
+        typing = sel and SEND is not None
+        bd = ORANGE if typing else sc if r["status"] != "ended" else GRAY
+        TL, TR, BL, BR, HZ, VT, ML, MR = ("╔", "╗", "╚", "╝", "═", "║", "╠", "╣") if sel else ("╭", "╮", "╰", "╯", "─", "│", "├", "┤")
+        key = (r["sid"], inner)
+        if TX_LINES.get(key, (None,))[0] is not t["log"]: TX_LINES[key] = (t["log"], chat_lines(t["log"], inner))
+        log = list(TX_LINES[key][1])
+        if t["sending"] or r["status"] == "busy": log.append(f"{ORANGE}{SPIN[FRAME % 10]} Working…{Z}")
+        if t["err"]: log.append(f"{RED}✗ {clip(one(t['err']), inner - 2)}{Z}")
+        ask = []
+        if t.get("pend"):
+            pd = t["pend"]
+            if pd["plan"] is not None:
+                import textwrap
+                body = [f"{FG}{x}{Z}" for ln in pd["plan"].splitlines() for x in (textwrap.wrap(ln, inner - 2) or [""])]
+                keep = max(1, (bh - 6) // 2)
+                ask = [f"{AMBER}{B}◆ the plan waits for you{Z} {D}y approve · d deny · or type a reply{Z}"] + body[:keep] + ([f"{D}  … {len(body) - keep} more lines{Z}"] if len(body) > keep else [])
+            else:
+                ask = [f"{AMBER}{B}◆ allow {pd['tool']}?{Z} {FG}{clip(one(pd['what']), inner - vw(pd['tool']) - 10)}{Z}", f"{D}y allow · d deny · or type a reply{Z}"]
+            ask = [f"{AMBER}{'┄' * inner}{Z}"] + ask
+        room = max(1, bh - 4 - len(ask))
+        log = [""] * (room - len(log[-room:])) + log[-room:] + ask
+        side = clip(f"{label.lower()} · {os.path.basename(r['cwd'].rstrip('/'))}" + (f" · {t['app']}" if t["app"] else ""), max(8, inner // 2))
+        title = clip(f"✻ {r['name'] or r['sid'][:8]}", max(4, W - 8 - vw(side)))
+        fill = HZ * max(0, W - 8 - vw(title) - vw(side))
+        out = [f"{bd}{TL}{HZ}{Z} {ORANGE}{B}{title}{Z} {bd}{fill}{Z} {D}{side}{Z} {bd}{HZ}{TR}{Z}"]
+        out += [f"{bd}{VT}{Z} {pad(x, inner)} {bd}{VT}{Z}" for x in log]
+        if typing:
+            cur = "\033[7m \033[27m" if FRAME // 3 % 2 == 0 else " "
+            field = f"{ORANGE}{B}❯{Z} {FG}{B}{SEND[-(inner - 3):] if vw(SEND) > inner - 3 else SEND}{Z}{cur}"
+        else:
+            ph = ({"owned": "enter: type to it · x " + ("stop" if t["sending"] else "close"), "type": f"enter: type to its {t['app']} tab",
+                "resume": "enter: resume it in cs with a message"}.get(t["mode"])
+                or (f"runs in {t['app']}: f focuses it" if t["app"] else "no terminal: read-only"))
+            field = f"{GRAY}❯{Z} {D}{clip(ph, inner - 2)}{Z}"
+        return out + [f"{bd}{ML}{HZ * (W - 2)}{MR}{Z}", f"{bd}{VT}{Z} {pad(field, inner)} {bd}{VT}{Z}", f"{bd}{BL}{HZ * (W - 2)}{BR}{Z}"]
+
+    if VIEW == "tx":
+        per = max(1, (cols - 1) // 64)
+        W = (cols - 1 - (per - 1)) // per
+        nrow, fit = max(1, -(-len(rows) // per)), max(1, TX_ROOM // 10)
+        show = min(nrow, fit)
+        bh = max(8, TX_ROOM // show)
+        # more rows than fit: scroll so the selected box's row is on screen
+        at = next((k // per for k, r in enumerate(rows) if r["sid"] == SEL), 0)
+        first = min(max(0, at - show + 1), nrow - show)
+        TILES.clear()
+        y0 = 3
+        if first or first + show < nrow: print(f"{D} rows {first + 1}–{first + show} of {nrow} · ↑↓ scroll{Z}"); y0 += 1
+        for i in range(first * per, (first + show) * per, per):
+            chunk = rows[i:i + per]
+            for j, r in enumerate(chunk):
+                x0 = j * (W + 1) + 1
+                TILES.append(dict(sid=r["sid"], idx=i + j, x0=x0, x1=x0 + W - 1, y0=y0, y1=y0 + bh - 1))
+            y0 += bh
+            for ln in zip(*(tx_box(r, W, bh) for r in chunk)): print(" ".join(ln))
+        if not rows: print(f"{D} no sessions{Z}")
+        return
+
     def agent_block(r, iw):
         ags = r.get("agents") or []
         if not ags: return []
@@ -496,44 +560,45 @@ def _run(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, "", "")
     return subprocess.run(cmd, **kw)
 
-def focus(r):
-    import re as _re
-    pid = r.get("pid")
-    if not (r.get("live") and pid): return "session not running"
-    try:
-        ps = subprocess.check_output(["ps", "-axo", "pid=,ppid=,command="], text=True)
-    except Exception as e:
-        return f"ps failed: {e}"
+def ps_info():
+    try: ps = subprocess.check_output(["ps", "-axo", "pid=,ppid=,tty=,command="], text=True)
+    except Exception: return {}
     info = {}
     for ln in ps.splitlines():
-        parts = ln.split(None, 2)
-        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
-            info[int(parts[0])] = (int(parts[1]), parts[2])
-    chain, cur = [], pid
+        parts = ln.split(None, 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+            info[int(parts[0])] = (int(parts[1]), parts[2], parts[3])
+    return info
+
+def term_of(r, info):
+    chain, cur = [], r.get("pid")
     while cur in info and len(chain) < 40:
-        ppid, cmd = info[cur]
+        ppid, _, cmd = info[cur]
         chain.append(cmd)
         if ppid <= 1: break
         cur = ppid
-    apps = []
-    for c in chain:
-        m = _re.search(r"/([^/]+)\.app/", c)
-        if m and m.group(1) not in apps: apps.append(m.group(1))
+    if not chain: return None, ""
+    tty = info[r["pid"]][1]
+    dev = f"/dev/{tty}" if tty and tty != "??" else ""
     if r.get("entry") == "claude-vscode" or ".vscode/extensions" in chain[0]:
-        app = "Cursor" if ".cursor" in chain[0] else "Visual Studio Code"
-    else:
-        app = next((a for a in apps if a not in ("Claude",)), None)
-        if not app: return "terminal app not found"
+        return ("Cursor" if ".cursor" in chain[0] else "Visual Studio Code"), dev
+    apps = [m.group(1) for m in (re.search(r"/([^/]+)\.app/", c) for c in chain) if m]
+    return next((x for x in apps if x != "Claude"), None), dev
+
+def focus(r):
+    pid = r.get("pid")
+    if owned(r["sid"]): return "this session runs inside cs: open it in transcripts (v in the TUI, 3 on the web)"
+    if not (r.get("live") and pid): return "session not running"
+    info = ps_info()
+    if not info: return "ps failed"
+    app, dev = term_of(r, info)
+    if not app: return "terminal app not found"
     cwd = r.get("cwd") or ""
     if app in ("Visual Studio Code", "Cursor", "Code", "Windsurf") or "Code" in app:
         name = {"Code": "Visual Studio Code"}.get(app, app)
         _run(["open", "-a", name] + ([cwd] if os.path.isdir(cwd) else []), timeout=8)
         return f"focused {name} → {os.path.basename(cwd)}"
-    try:
-        tty = subprocess.check_output(["ps", "-p", str(pid), "-o", "tty="], text=True).strip()
-    except Exception:
-        tty = ""
-    dev = f"/dev/{tty}" if tty and tty != "??" else ""
+    tty = dev[5:]
     script = None
     if app == "Terminal" and dev:
         script = f'''tell application "Terminal"
@@ -570,6 +635,158 @@ end tell'''
         return f"{app}: {res.stderr.strip()[:80] or 'osascript failed'}"
     _run(["open", "-a", app], timeout=8)
     return f"focused {app} (this app can't select a specific tab)"
+
+def tool_line(x):
+    inp = x.get("input") or {}
+    arg = next((v for v in inp.values() if isinstance(v, str)), "")
+    return f"$ {inp['command']}" if inp.get("command") else f"{x.get('name', '').split('__')[-1]} {arg}"
+
+TX_CACHE = {}
+
+def chatlog(path):
+    try: key = (os.path.getmtime(path), os.path.getsize(path))
+    except (OSError, TypeError): return []
+    hit = TX_CACHE.get(path)
+    if hit and hit[0] == key: return hit[1]
+    log = []
+    with open(path, errors="ignore") as f:
+        for line in f:
+            try: d = json.loads(line)
+            except Exception: continue
+            if d.get("isSidechain") or d.get("isMeta"): continue
+            c = (d.get("message") or {}).get("content")
+            if d.get("type") == "user":
+                text = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text") if isinstance(c, list) else ""
+                cmd = tag(text, "command-name")
+                if cmd: log.append(("you", f"{cmd} {tag(text, 'command-args') or ''}".strip()))
+                elif text.strip() and not text.lstrip().startswith("<"): log.append(("you", text.strip()))
+            elif d.get("type") == "assistant" and isinstance(c, list):
+                for x in c:
+                    if not isinstance(x, dict): continue
+                    if x.get("type") == "text" and x.get("text", "").strip(): log.append(("claude", x["text"].strip()))
+                    elif x.get("type") == "tool_use": log.append(("tool", tool_line(x)))
+    TX_CACHE[path] = (key, log)
+    return log
+
+OWNED, OWN_LOCK = {}, threading.Lock()
+OWN_MODES = ("default", "plan", "acceptEdits")
+
+def owned(sid):
+    o = OWNED.get(sid)
+    return o if o and o["p"].poll() is None else None
+
+def own_write(o, obj):
+    try:
+        with OWN_LOCK:
+            o["p"].stdin.write(json.dumps(obj) + "\n")
+            o["p"].stdin.flush()
+        return None
+    except (OSError, ValueError) as e:
+        return f"the session's claude is gone: {e}"
+
+def own_read(sid, o):
+    for line in o["p"].stdout:
+        try: d = json.loads(line)
+        except Exception: continue
+        t = d.get("type")
+        if t == "control_request" and (d.get("request") or {}).get("subtype") == "can_use_tool":
+            r = d["request"]
+            o["pend"] = dict(id=d["request_id"], tool=r.get("tool_name") or "", input=r.get("input") or {},
+                what=tool_line(dict(name=r.get("tool_name"), input=r.get("input"))))
+        elif t == "control_cancel_request" and o["pend"] and o["pend"]["id"] == d.get("request_id"):
+            o["pend"] = None
+        elif t == "result":
+            o["busy"], o["pend"] = False, None
+            o["err"] = str(d.get("result") or d.get("subtype"))[:200] if d.get("is_error") else None
+    o["p"].wait()
+    o["busy"], o["pend"] = False, None
+    if o["p"].returncode and not o["closed"]:
+        try: last = [l for l in open(o["log"], errors="ignore").read().splitlines() if l.strip()][-1:]
+        except OSError: last = []
+        o["err"] = (last[0] if last else f"claude exited with code {o['p'].returncode}")[:200]
+
+def own_start(cwd, sid=None, mode="default", text=""):
+    import uuid
+    if not os.path.isdir(cwd): return None, f"not a folder: {cwd}"
+    if mode not in OWN_MODES: return None, f"unknown permission mode: {mode}"
+    if sid and owned(sid): return sid, None
+    resume, sid = bool(sid), sid or str(uuid.uuid4())
+    claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+    log = f"{HOME}/state/cs-own-{sid[:8]}.log"
+    # --permission-prompt-tool stdio: permission prompts and plan approval come to us as control requests
+    cmd = [claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--permission-prompt-tool", "stdio", "--permission-mode", mode, "--resume" if resume else "--session-id", sid]
+    try:
+        with open(log, "w") as f:
+            proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=f, text=True, bufsize=1)
+    except OSError as e:
+        return None, f"cannot start claude: {e}"
+    o = OWNED[sid] = dict(p=proc, cwd=cwd, busy=False, pend=None, err=None, log=log, closed=False)
+    threading.Thread(target=own_read, args=(sid, o), daemon=True).start()
+    if text.strip():
+        o["busy"] = True
+        err = own_write(o, dict(type="user", message=dict(role="user", content=text.strip())))
+        if err: return None, err
+    return sid, None
+
+def own_answer(sid, allow, note=""):
+    o = owned(sid)
+    if not o or not o["pend"]: return "nothing to answer"
+    pend, o["pend"] = o["pend"], None
+    res = dict(behavior="allow", updatedInput=pend["input"]) if allow else dict(behavior="deny", message=note or "The user denied this.")
+    return own_write(o, dict(type="control_response", response=dict(subtype="success", request_id=pend["id"], response=res))) or (
+        f"allowed {pend['tool']}" if allow else f"denied {pend['tool']}" + (" with your reply" if note else ""))
+
+def own_stop(sid):
+    import uuid
+    o = owned(sid)
+    if not o: return "this session isn't run by cs"
+    if o["busy"]:
+        return own_write(o, dict(type="control_request", request_id=str(uuid.uuid4()), request=dict(subtype="interrupt"))) or "interrupted"
+    o["closed"] = True
+    o["p"].terminate()
+    return "closed the session: resume it from here or in a terminal"
+
+def send_mode(r, info):
+    if owned(r["sid"]): return dict(mode="owned", app="cs")
+    if not r.get("live"): return dict(mode="resume", app=None)
+    app, dev = term_of(r, info)
+    return dict(mode="type" if dev and (app == "Terminal" or (app or "").startswith("iTerm")) else "none", app=app)
+
+def transcript_of(r, info):
+    o = OWNED.get(r["sid"])
+    pend = o and o["pend"] and dict(tool=o["pend"]["tool"], what=o["pend"]["what"], plan=o["pend"]["input"].get("plan") if o["pend"]["tool"] == "ExitPlanMode" else None)
+    return dict(log=chatlog(transcript(r["sid"]))[-60:], **send_mode(r, info), sending=bool(o and o["busy"] and not o["pend"]), err=o and o["err"], pend=pend)
+
+def session_send(r, text):
+    text = text.strip()
+    if not text: return "nothing to send"
+    info = ps_info()
+    m = send_mode(r, info)
+    if m["mode"] == "owned":
+        o = OWNED[r["sid"]]
+        if o["pend"]: return own_answer(r["sid"], False, text)
+        o["busy"], o["err"] = True, None
+        return own_write(o, dict(type="user", message=dict(role="user", content=text))) or "sent"
+    if m["mode"] == "none":
+        return f"this session runs in {m['app']}: focus it to type there" if m["app"] else "this session has no terminal to type into"
+    if m["mode"] == "resume":
+        cwd = r["cwd"] if os.path.isdir(r["cwd"]) else os.path.expanduser("~")
+        _, err = own_start(cwd, r["sid"], "default", text)
+        return err or "resumed the session in cs: answer its prompts here"
+    _, dev = term_of(r, info)
+    # shortcut: a typed newline submits, so newlines become spaces; upgrade to bracketed paste if multi-line messages matter
+    q = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
+    line = q(" ".join(text.split()))
+    if m["app"] == "Terminal":
+        script = (f'tell application "Terminal"\nrepeat with w in windows\nrepeat with t in tabs of w\nif tty of t is "{dev}" then\n'
+            f'do script "{line}" in t\nreturn "ok"\nend if\nend repeat\nend repeat\nend tell')
+    else:
+        script = (f'tell application "iTerm"\nrepeat with w in windows\nrepeat with t in tabs of w\nrepeat with s in sessions of t\n'
+            f'if tty of s is "{dev}" then\ntell s to write text "{line}"\nreturn "ok"\nend if\nend repeat\nend repeat\nend repeat\nend tell')
+    res = _run(["osascript", "-e", script], capture_output=True, text=True, timeout=10)
+    if res.returncode: return f"{m['app']}: {res.stderr.strip()[:80] or 'osascript failed'}"
+    return f"sent to {m['app']} tab {dev[5:]}" if res.stdout.strip() == "ok" or os.environ.get("CS_DRY") else f"{m['app']} tab {dev[5:]} not found"
 
 def settings():
     try: c = json.load(open(SETTINGS, encoding="utf-8"))
@@ -1050,7 +1267,7 @@ TERMINALS = ("Terminal", "iTerm", "Warp", "Ghostty", "kitty", "Alacritty", "WezT
 
 def terminals():
     dirs = ("/System/Applications/Utilities", "/Applications/Utilities", "/Applications", os.path.expanduser("~/Applications"))
-    return [n for n in TERMINALS if any(os.path.isdir(f"{d}/{n}.app") for d in dirs)]
+    return ["cs"] + [n for n in TERMINALS if any(os.path.isdir(f"{d}/{n}.app") for d in dirs)]
 
 def task_terminal():
     app, found = settings().get("terminal"), terminals()
@@ -1084,23 +1301,27 @@ def task_session(tid, resume=False):
     claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
     os.makedirs(TASK_DIR, exist_ok=True)
     sid, branch = t["session_id"], t["branch"] or f"task/{t['id']}-{task_slug(t['title'])}"
-    if resume:
-        run = f"exec {shlex_quote(claude)} --resume {shlex_quote(sid)}"
-    else:
-        import uuid
-        sid, pf = str(uuid.uuid4()), f"{TASK_DIR}/task-{t['id']}-prompt.md"
-        with open(pf, "w", encoding="utf-8") as f: f.write(task_prompt(t, branch))
-        run = f'exec {shlex_quote(claude)} --permission-mode plan --session-id {sid} "$(cat {shlex_quote(pf)})"'
-    sh = f"{TASK_DIR}/task-{t['id']}.command"
-    with open(sh, "w", encoding="utf-8") as f: f.write(f"#!/bin/sh\ncd {shlex_quote(t['repo'])} || exit 1\n{run}\n")
-    os.chmod(sh, 0o755)
     app = task_terminal()
-    err = terminal_run(sh, f"task #{t['id']} · {t['title'][:40]}", app)
-    if err: return None, f"could not open {app}: {err}"
+    if app == "cs":
+        sid, err = own_start(t["repo"], sid, "default") if resume else own_start(t["repo"], None, "plan", task_prompt(t, branch))
+        if err: return None, f"could not start the session: {err}"
+    else:
+        if resume:
+            run = f"exec {shlex_quote(claude)} --resume {shlex_quote(sid)}"
+        else:
+            import uuid
+            sid, pf = str(uuid.uuid4()), f"{TASK_DIR}/task-{t['id']}-prompt.md"
+            with open(pf, "w", encoding="utf-8") as f: f.write(task_prompt(t, branch))
+            run = f'exec {shlex_quote(claude)} --permission-mode plan --session-id {sid} "$(cat {shlex_quote(pf)})"'
+        sh = f"{TASK_DIR}/task-{t['id']}.command"
+        with open(sh, "w", encoding="utf-8") as f: f.write(f"#!/bin/sh\ncd {shlex_quote(t['repo'])} || exit 1\n{run}\n")
+        os.chmod(sh, 0o755)
+        err = terminal_run(sh, f"task #{t['id']} · {t['title'][:40]}", app)
+        if err: return None, f"could not open {app}: {err}"
     now = time.time()
     def save(c):
         if resume:
-            task_event(c, tid, "session", f"resumed session {sid[:8]} in {app}", now)
+            task_event(c, tid, "session", f"resumed session {sid[:8]} in {'cs' if app == 'cs' else app}", now)
             c.execute("UPDATE tasks SET updated = ? WHERE id = ?", (now, tid))
             return
         c.execute("UPDATE tasks SET session_id = ?, branch = ?, status = 'analyzing', result = NULL, report = NULL, updated = ? WHERE id = ?",
@@ -1233,9 +1454,7 @@ def chat_read(p):
                 if x.get("type") == "text" and x.get("text", "").strip():
                     CHAT.append(("claude", x["text"].strip())); replied = True
                 elif x.get("type") == "tool_use":
-                    inp = x.get("input") or {}
-                    arg = next((v for v in inp.values() if isinstance(v, str)), "")
-                    CHAT.append(("tool", f"$ {inp['command']}" if inp.get("command") else f"{x.get('name', '').split('__')[-1]} {arg}"))
+                    CHAT.append(("tool", tool_line(x)))
         elif t == "user":
             for x in d.get("message", {}).get("content") or []:
                 if isinstance(x, dict) and x.get("type") == "tool_result" and x.get("is_error"):
@@ -1249,18 +1468,14 @@ def chat_read(p):
         CHAT.append(("err", noise[-1] if noise else f"claude exited with code {p.returncode}"))
     CHAT_PROC = None
 
-def chat_view(cols):
+def chat_lines(entries, inner):
     import textwrap
     T = lambda n: f"\033[38;5;{n}m"
-    Z, B, D = "\033[0m", "\033[1m", "\033[2m"
+    Z = "\033[0m"
     ORANGE, GRAY, RED, FG, MID, UBG = T(173), T(240), T(167), T(253), T(245), "\033[48;5;236m"
-    on = INPUT is not None
-    W = max(30, cols - 1)
-    inner = W - 4
-    bd = ORANGE if on else GRAY
     home = os.path.expanduser("~")
     log = []
-    for kind, text in CHAT:
+    for kind, text in entries:
         if kind == "tool":
             cmd = (str(text).splitlines() or [""])[0].replace(home, "~")
             log.append(f"  {GRAY}⎿{Z}  {MID}{clip(cmd, inner - 5)}{Z}")
@@ -1273,6 +1488,17 @@ def chat_view(cols):
                 log.append(f"{ORANGE}{'⏺' if first else ' '}{Z} {FG}{seg}{Z}")
             else:
                 log.append(f"{RED}{'✗' if first else ' '} {seg}{Z}")
+    return log
+
+def chat_view(cols):
+    T = lambda n: f"\033[38;5;{n}m"
+    Z, B, D = "\033[0m", "\033[1m", "\033[2m"
+    ORANGE, GRAY, FG = T(173), T(240), T(253)
+    on = INPUT is not None
+    W = max(30, cols - 1)
+    inner = W - 4
+    bd = ORANGE if on else GRAY
+    log = chat_lines(CHAT, inner)
     if CHAT_PROC:
         log.append(f"{ORANGE}{'·✢✳✶✻✽✻✶✳✢'[FRAME % 10]} Working…{Z} {D}{int(time.time() - CHAT_T0)}s{Z}")
     tip = "open a repo in VS Code, show it in Finder…"
@@ -1376,6 +1602,9 @@ def server(port):
             if u.path == "/api/state":
                 q = parse_qs(u.query)
                 rows = sessions(q.get("all") == ["1"], q.get("fresh") == ["1"])
+                if q.get("tx") == ["1"]:
+                    info = ps_info()
+                    rows = [dict(r, tx=transcript_of(r, info)) for r in rows]
                 _, lst, cur = themes()
                 return self.reply(200, dict(sessions=rows, usage=usage_data(), chat=chat_state(), now=time.time(), projects=projects(), tasks=tasks_state(),
                     cfg=dict(themes=lst, theme=cur["id"], projects=dict(dir=str(settings().get("projects") or "~/Projects"), env=bool(os.environ.get("CS_REPO_ROOTS"))), window=WINDOW, agent_rows=AGENT_ROWS, chat_rows=CHAT_ROWS, chat_model=CHAT_MODEL, terminal=dict(app=task_terminal(), list=terminals()), home=os.path.expanduser("~"))))
@@ -1403,6 +1632,21 @@ def server(port):
                 with lock:
                     row = next((r for _, rows in cache.values() for r in rows if r["sid"] == sid), None)
                 return self.reply(200, {"msg": focus(row) if row else "session not found"})
+            if u.path == "/api/session/new":
+                cwd = os.path.expanduser(str(body.get("cwd") or "").strip())
+                sid, err = own_start(cwd, None, str(body.get("mode") or "default"), str(body.get("text") or ""))
+                with lock: cache.clear()
+                return self.reply(400, {"error": err}) if err else self.reply(200, {"sid": sid, "msg": f"started a session in {os.path.basename(cwd)}"})
+            if u.path in ("/api/session/answer", "/api/session/stop"):
+                sid = str(body.get("sid") or "")
+                msg = own_answer(sid, bool(body.get("allow"))) if u.path == "/api/session/answer" else own_stop(sid)
+                with lock: cache.clear()
+                return self.reply(200, {"msg": msg})
+            if u.path == "/api/session/send":
+                sid = body.get("sid")
+                with lock:
+                    row = next((r for _, rows in cache.values() for r in rows if r["sid"] == sid), None)
+                return self.reply(200, {"msg": session_send(row, str(body.get("text") or "")) if row else "session not found"})
             if u.path == "/api/theme":
                 t = next((t for t in themes()[1] if t["id"] == body.get("id")), None)
                 if not t: return self.reply(400, {"error": "unknown theme"})
@@ -1514,7 +1758,14 @@ def serve(srv):
     finally:
         if CHAT_PROC: CHAT_PROC.terminate()
         if INBOX["proc"]: INBOX["proc"].terminate()
+        for o in OWNED.values(): o["p"].terminate()
         srv.server_close()
+
+def tx_start(row, msg):
+    t = TXD.get(row["sid"])
+    if t and t["mode"] == "none":
+        return None, (f"this session runs in {t['app']}: f focuses it" if t["app"] else "this session has no terminal to type into", time.time())
+    return "", msg
 
 once = any(a in ("-o", "--once") for a in args)
 serve_at = next((i for i, a in enumerate(args) if a in ("-s", "--serve")), None)
@@ -1558,19 +1809,22 @@ else:
             if time.time() - last >= 2:
                 data = collect()
                 PROJ = projects()
+                if VIEW == "tx":
+                    info = ps_info()
+                    TXD = {r["sid"]: transcript_of(r, info) for r in data}
                 last = time.time()
             if True:
                 FRAME += 1
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    render(data)
-                lines = buf.getvalue().rstrip("\n").split("\n")
                 sz = shutil.get_terminal_size((120, 30))
                 h = sz.lines
-                if PSEARCH is not None:
-                    hint = "\033[2m type to filter · ←→ select · enter open in VS Code · esc close \033[0m"
+                if SEND is not None:
+                    hint = "\033[2m enter send · esc cancel · ctrl-u clear line \033[0m"
+                elif PSEARCH is not None:
+                    hint = "\033[2m type to filter · ←→ select · enter " + ("start a session there" if PNEW else "open in VS Code") + " · esc close \033[0m"
+                elif INPUT is None and VIEW == "tx":
+                    hint = "\033[2m ←↑↓→ select · enter/click type · n new · y/d answer · x stop · f focus · v tiles · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 elif INPUT is None:
-                    hint = "\033[2m ←↑↓→ select · enter/click focus · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
+                    hint = "\033[2m ←↑↓→ select · enter/click focus · v transcripts · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 else:
                     hint = "\033[2m enter send · esc close chat · ctrl-u clear line · /clear new chat" + (" · " if WEB_URL else " ") + "\033[0m"
                 WEB_HIT = None
@@ -1581,6 +1835,11 @@ else:
                 chat = chat_view(sz.columns)
                 pline, hs = proj_view(sz.columns)
                 bottom = [pline] + chat + [usage_line(0), hint]
+                TX_ROOM = max(8, h - len(bottom) - 4)
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    render(data)
+                lines = buf.getvalue().rstrip("\n").split("\n")
                 body = lines[:max(1, h - len(bottom) - 1)]
                 PROJ_Y = h - len(bottom) + 1
                 PROJ_HITS = hs
@@ -1608,13 +1867,30 @@ else:
                         found = proj_match(PSEARCH, PROJ)
                         if ev[0] == "arrow": PSEL = max(0, min(len(found) - 1, PSEL + (1 if ev[1] in "BC" else -1)))
                         elif k == "\x03": done = True
-                        elif k in ("\x1b", "\t"): PSEARCH = None
+                        elif k in ("\x1b", "\t"): PSEARCH, PNEW = None, False
                         elif k in ("\r", "\n"):
-                            if found: MSG = (open_project(found[min(PSEL, len(found) - 1)]["path"]), time.time())
-                            PSEARCH = None
+                            if found and PNEW:
+                                path = found[min(PSEL, len(found) - 1)]["path"]
+                                sid, err = own_start(path)
+                                if sid: SEL, SEND, last = sid, "", 0
+                                MSG = (err or f"started a session in {os.path.basename(path)}: type its first message", time.time())
+                            elif found: MSG = (open_project(found[min(PSEL, len(found) - 1)]["path"]), time.time())
+                            PSEARCH, PNEW = None, False
                         elif k in ("\x7f", "\x08"): PSEARCH, PSEL = PSEARCH[:-1], 0
                         elif k == "\x15": PSEARCH, PSEL = "", 0
                         elif k.isprintable(): PSEARCH, PSEL = PSEARCH + k, 0
+                        continue
+                    if SEND is not None and ev[0] != "click":
+                        k = ev[1] if ev[0] == "key" else ""
+                        if k == "\x03": done = True
+                        elif k in ("\x1b", "\t"): SEND = None
+                        elif k in ("\r", "\n"):
+                            row = next((x for x in data if x["sid"] == SEL), None) or (owned(SEL) and dict(sid=SEL, live=True, cwd=""))
+                            if row and SEND.strip(): MSG, last = (session_send(row, SEND), time.time()), 0
+                            SEND = None
+                        elif k in ("\x7f", "\x08"): SEND = SEND[:-1]
+                        elif k == "\x15": SEND = ""
+                        elif k.isprintable(): SEND += k
                         continue
                     if INPUT is not None and ev[0] != "click":
                         k = ev[1] if ev[0] == "key" else ""
@@ -1636,7 +1912,7 @@ else:
                             if hit: MSG, PSEARCH = (open_project(hit), time.time()), None
                             elif PSEARCH is None: PSEARCH, PSEL, INPUT = "", 0, None
                             continue
-                        PSEARCH = None
+                        PSEARCH, SEND = None, None
                         if CHAT_Y[0] <= ev[2] <= CHAT_Y[1]:
                             INPUT = INPUT or ""
                             continue
@@ -1645,7 +1921,8 @@ else:
                         if hit:
                             SEL = hit["sid"]
                             row = next((x for x in data if x["sid"] == SEL), None)
-                            if row: MSG = (focus(row), time.time())
+                            if row and VIEW == "tx": SEND, MSG = tx_start(row, MSG)
+                            elif row: MSG = (focus(row), time.time())
                     elif ev[0] == "arrow":
                         if not data: continue
                         ids = [x["sid"] for x in data]
@@ -1661,13 +1938,23 @@ else:
                         elif k in ("/", "\t"): INPUT = ""
                         elif k in ("p", "P"): PSEARCH, PSEL = "", 0
                         elif k in ("a", "A"): show_all = not show_all; last = 0
+                        elif k in ("v", "V"): VIEW, last = "tiles" if VIEW == "tx" else "tx", 0
+                        elif k in ("n", "N") and VIEW == "tx": PSEARCH, PSEL, PNEW = "", 0, True
+                        elif k in ("y", "Y", "d", "D", "x", "X") and VIEW == "tx":
+                            if not SEL: MSG = ("select a session with the arrow keys first", time.time())
+                            elif k in "xX": MSG, last = (own_stop(SEL), time.time()), 0
+                            else: MSG, last = (own_answer(SEL, k in "yY"), time.time()), 0
+                        elif k in ("f", "F") and VIEW == "tx":
+                            row = next((x for x in data if x["sid"] == SEL), None)
+                            MSG = (focus(row) if row else "select a session with the arrow keys first", time.time())
                         elif k in ("r", "R"): last = 0
                         elif k in ("w", "W"):
                             if WEB_URL: open_web()
                             else: MSG = ("web view not running", time.time())
                         elif k in ("\r", "\n", " "):
                             row = next((x for x in data if x["sid"] == SEL), None)
-                            if row: MSG = (focus(row), time.time())
+                            if row and VIEW == "tx": SEND, MSG = tx_start(row, MSG)
+                            elif row: MSG = (focus(row), time.time())
                             else: MSG = ("select a session with the arrow keys first", time.time())
                 if done: break
     except KeyboardInterrupt:
@@ -1675,6 +1962,7 @@ else:
     finally:
         if CHAT_PROC: CHAT_PROC.terminate()
         if INBOX["proc"]: INBOX["proc"].terminate()
+        for o in OWNED.values(): o["p"].terminate()
         if old: termios.tcsetattr(fd, termios.TCSADRAIN, old)
         out.write("\033[?1000l\033[?1006l\033[?25h\033[?1049l")
         out.flush()

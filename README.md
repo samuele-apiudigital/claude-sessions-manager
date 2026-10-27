@@ -26,7 +26,8 @@ Requires `python3` (stdlib only). Run `cs`.
 | `cs -w`        | open the web dashboard instead of the TUI |
 
 Keys: arrows select, Enter or click focuses the session's app, `/` opens the chat,
-`p` searches projects, `a` toggles ended sessions, `r` refreshes, `w` opens the web view, `q`/Esc quits.
+`p` searches projects, `a` toggles ended sessions, `v` switches to [transcripts](#transcripts), `r` refreshes,
+`w` opens the web view, `q`/Esc quits.
 
 `cs` also serves the web dashboard in the background and shows an `open web view ↗` link on the bottom
 line (click it or press `w`). It uses the same port as `cs -s` (`7421` or `$CS_PORT`); if a
@@ -54,7 +55,7 @@ there is one for the same port (Chrome, Edge or Brave apps in `~/Applications`).
 
 Keys: arrows select, Enter or click focuses the session's app, `/` opens the chat (Esc closes),
 `p` searches projects, `a` toggles ended sessions, `t` switches between tiles and the table layout, `r` refreshes,
-`1` and `2` switch between sessions and [tasks](#tasks).
+`1`, `2` and `3` switch between sessions, [tasks](#tasks) and [transcripts](#transcripts).
 
 It can be installed as an app (its own window and Dock icon): press `i`, or use the install
 button in Chrome's address bar; in Safari use File › Add to Dock. The app needs `cs`, `cs -s` or
@@ -168,6 +169,40 @@ Gmail. The scan learns from your corrections, which it reads as examples on ever
 - `make task` on a skipped thread creates the task and tells later scans that mail like it is a task;
 - `not a task` on an email task rejects it and tells later scans the opposite;
 - changing an email task's project tells later scans where mail like it belongs.
+
+## Transcripts
+
+The transcripts view (`v` in the TUI, `3` or the `transcripts` tab on the web) shows one chat box per
+session: its conversation read from the transcript (your messages, Claude's replies and its tool calls,
+without subagents) with an input line at the bottom. Select a box and press Enter (or click it) to type;
+Enter sends. Where the message goes depends on the session:
+
+| Session                      | Sending                                                                        |
+|------------------------------|--------------------------------------------------------------------------------|
+| run by cs                    | straight to it, see below                                                      |
+| ended                        | resumes it as a session run by cs, with your message                           |
+| live in Terminal or iTerm2   | typed into its tab (found by tty), as if you typed it there                    |
+| live in Warp, VS Code, other | read-only: those apps can't be typed into from outside, `f`/`focus` brings it up |
+
+### Sessions run by cs
+
+`cs` can run sessions itself, with no terminal: `claude -p` in stream-json mode, with its permission
+prompts sent to the dashboard (`--permission-prompt-tool stdio`). Start one with `new session in` above
+the boxes on the web (folder, permission mode, optional first message), or `n` in the TUI (pick the
+folder in the projects search). Task sessions can run this way too: pick `dashboard (cs)` in the Tasks
+bar's `sessions in`, and Analyze starts the session in plan mode inside cs.
+
+When Claude asks to use a tool, or posts a plan, the box shows it with `allow`/`approve` and `deny`
+(`y` and `d` in the TUI). Typing a reply instead denies it with your message, which is how you comment
+on a plan. `stop` (`x`) interrupts the current turn; on an idle session it becomes `close`, which ends
+the process so you can resume the session anywhere.
+
+These sessions are child processes of the `cs` that started them: quitting that `cs` ends them (they show
+as ended and resume from their box). Only that `cs` can drive them, so if the TUI links to a web view
+served by another `cs`, start them from the one you use.
+
+Typed messages to Terminal and iTerm2 are sent as one line (newlines become spaces, since a newline would
+submit early). Sending to them asks macOS once to let the dashboard control that app.
 
 ## Chat
 
