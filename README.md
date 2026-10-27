@@ -5,6 +5,8 @@ as a web page. One tile per session with status, context usage, model, tokens, w
 git branch, current task, the session's subagents and workflows, plus a usage-limit bar, a
 projects bar that opens repos in VS Code, and a chat with a small Claude that acts for you.
 
+![Sessions](assets/sessions.png)
+
 ## Install
 
 ```sh
@@ -57,6 +59,8 @@ Keys: arrows select, Enter or click focuses the session's app, `/` opens the cha
 `p` searches projects, `a` toggles ended sessions, `t` switches between tiles and the table layout, `r` refreshes,
 `1`, `2` and `3` switch between sessions, [tasks](#tasks) and [transcripts](#transcripts).
 
+![Table layout](assets/table.png)
+
 It can be installed as an app (its own window and Dock icon): press `i`, or use the install
 button in Chrome's address bar; in Safari use File › Add to Dock. The app needs `cs`, `cs -s` or
 `cs -w` running on the same port; while the server is down it shows the last page as offline and
@@ -83,6 +87,10 @@ Each theme is one complete stylesheet in `web/themes/`. To add one, copy a theme
 it, and add an entry to `themes`. The page sets some colours inline, so a theme must define the
 tokens listed at the top of `Terminal-theme.css`.
 
+![Claude theme](assets/theme-claude.png)
+
+![Dracula theme](assets/theme-dracula.png)
+
 ## Projects
 
 The line above the chat lists the git repos you used most recently with Claude (from
@@ -94,6 +102,8 @@ change it.
 The projects folder is `projects` in `.settings.json` (default `~/Projects`, colon-separate several).
 Repos are found up to three levels deep. `CS_REPO_ROOTS`, if set, overrides it. Projects open
 with `open -a "Visual Studio Code"`, so VS Code must be installed.
+
+![Projects search](assets/projects-search.png)
 
 ## Tasks
 
@@ -111,6 +121,10 @@ and all of them, `s` scans the inbox, `m` shows the inbox log. The detail panel 
 in VS Code and deletes the task (with its subtasks).
 
 Tasks live in `~/.claude/state/cs-tasks.db` (SQLite, or `$CS_TASKS_DB`).
+
+![Tasks](assets/tasks.png)
+
+![New task](assets/new-task.png)
 
 ### Working a task with Claude
 
@@ -132,6 +146,8 @@ the plan, the final report, and the branch's worktree, commits and diff stat; `o
 worktree once it exists. Nothing is pushed, merged or deployed and no email is sent: you review the branch
 and merge it yourself, then mark the task done. `resume session` reopens an ended session in the chosen terminal;
 `analyze again` starts a new one. The first `analyze` asks macOS to let the dashboard control Terminal.
+
+![Task detail](assets/task-detail.png)
 
 `sessions in` in the Tasks bar picks the terminal for these sessions, from the ones installed (Terminal,
 iTerm, Warp, Ghostty, kitty, Alacritty, WezTerm); it is saved as `terminal` in `.settings.json` and
@@ -170,6 +186,8 @@ Gmail. The scan learns from your corrections, which it reads as examples on ever
 - `not a task` on an email task rejects it and tells later scans the opposite;
 - changing an email task's project tells later scans where mail like it belongs.
 
+![Inbox log](assets/inbox-log.png)
+
 ## Transcripts
 
 The transcripts view (`v` in the TUI, `3` or the `transcripts` tab on the web) shows one chat box per
@@ -188,6 +206,8 @@ Each box can be resized: the three box icons next to its input (or `s` on the se
 rows of the grid). The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
 beside a big one. When the grid has a single column, a 2-column box stays 1 column wide. The web remembers
 sizes per session in the browser; the TUI keeps them until it quits.
+
+![Transcripts](assets/transcripts.png)
 
 ### Sessions run by cs
 
@@ -216,6 +236,8 @@ your sessions: "open claude-sessions in VS Code", "show ariston in Finder". Ente
 Esc closes, `/clear` starts a new chat. It knows the git repos in the projects folder
 and your live sessions, and runs headless (`claude -p`) with every tool and MCP server
 and permissions bypassed, so it acts without asking.
+
+![Chat](assets/chat.png)
 
 | Variable          | Default                                         |
 |-------------------|-------------------------------------------------|
