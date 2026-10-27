@@ -5,6 +5,8 @@ as a web page. One tile per session with status, context usage, model, tokens, w
 git branch, current task, the session's subagents and workflows, plus a usage-limit bar, a
 projects bar that opens repos in VS Code, and a chat with a small Claude that acts for you.
 
+▶ [Watch the demo video](assets/demo.mp4) (54s)
+
 ![Sessions](assets/sessions.png)
 
 ## Install
