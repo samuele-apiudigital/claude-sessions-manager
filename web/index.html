@@ -424,7 +424,7 @@ function renderTx() {
       el.innerHTML = `<div class="chat-head" draggable="true"><span class="chat-title"></span><span class="chat-side"></span></div><div class="chat-log"></div>`
         + `<div class="tx-ask" hidden></div>`
         + `<div class="chat-field"><span class="p">❯</span><input class="tx-input" autocomplete="off" spellcheck="false">`
-        + `<span class="tx-size" role="group" aria-label="Box size">${TX_SIZES.map(z => `<button type="button" data-size="${z}" title="${txSizeName(z)}" aria-label="size ${txSizeName(z)}">${txIcon(z)}</button>`).join("")}</span>`
+        + `<span class="tx-size" role="group" aria-label="Box size"><span class="tx-size-pop">${TX_SIZES.map(z => `<button type="button" data-size="${z}" title="${txSizeName(z)}" aria-label="size ${txSizeName(z)}">${txIcon(z)}</button>`).join("")}</span></span>`
         + `<select class="tx-mode" aria-label="Permission mode" title="permission mode">${$("txNew").elements.mode.innerHTML}</select>`
         + `<button type="button" class="tk-btn" data-act="stop"></button><button type="button" class="tk-btn" data-act="focus">focus</button></div>`;
     }

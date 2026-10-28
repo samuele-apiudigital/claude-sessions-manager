@@ -495,7 +495,16 @@ kbd { font: inherit; color: var(--fg); }
 .tx-ask[hidden] { display: none; }
 .tx-ask-q { overflow-wrap: anywhere; }
 .tx-plan { max-height: 180px; overflow: auto; overflow-wrap: anywhere; font-size: .92em; color: var(--fg); border-left: 2px solid var(--orange); padding-left: 8px; }
-.tx-size { display: inline-flex; gap: 2px; flex: none; }
+/* only the current size shows (22px = one button); hover or focus opens the others leftward over the input */
+.tx-size { position: relative; flex: none; width: 22px; height: 22px; }
+.tx-size-pop { position: absolute; top: 0; right: 0; display: flex; gap: 2px; border-radius: 6px; }
+.tx-size:not(:hover):not(:focus-within) button:not([aria-pressed=true]) { display: none; }
+.tx-size:hover .tx-size-pop, .tx-size:focus-within .tx-size-pop { z-index: 2; background: var(--bg); box-shadow: 0 0 0 3px var(--bg); }
+/* the current size stays rightmost, in place, and the others slide out to its left */
+.tx-size button[aria-pressed=true] { order: 1; }
+.tx-size:hover .tx-size-pop, .tx-size:focus-within .tx-size-pop { animation: tx-size-slide .18s ease-out; }
+@keyframes tx-size-slide { from { clip-path: inset(-3px -3px -3px calc(100% - 22px)); } to { clip-path: inset(-3px); } }
+@media (prefers-reduced-motion: reduce) { .tx-size-pop { animation: none !important; } }
 .tx-size button { display: grid; place-items: center; padding: 3px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
 .tx-size button:hover { color: var(--fg); }
 .tx-size button[aria-pressed=true] { color: var(--orange); border-color: var(--gray); }
