@@ -204,10 +204,11 @@ Enter sends. Where the message goes depends on the session:
 | live in Terminal or iTerm2   | typed into its tab (found by tty), as if you typed it there                    |
 | live in Warp, VS Code, other | read-only: those apps can't be typed into from outside, `f`/`focus` brings it up |
 
-Each box can be resized: the three box icons next to its input (or `s` on the selected box) pick 1×1, 2×1 or 2×2 (columns ×
-rows of the grid). The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
+Each box can be resized: the three box icons next to its input (or `s` on the selected box) pick 1×1, 2×1, 2×2 (columns ×
+rows of the grid), full width, or full width and 2 rows tall. The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
 beside a big one. When the grid has a single column, a 2-column box stays 1 column wide. The web remembers
-sizes per session in the browser; the TUI keeps them until it quits.
+sizes per session in the browser; the TUI keeps them until it quits. In the web, drag a box by its title (or
+`shift+←`/`shift+→` on the selected box) to reorder; the order is remembered in the browser.
 
 ![Transcripts](assets/transcripts.png)
 

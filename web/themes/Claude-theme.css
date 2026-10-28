@@ -445,20 +445,23 @@ kbd { font: inherit; color: var(--fg); }
 .txbox { display: flex; flex-direction: column; min-height: 0; margin-top: 0; min-width: 0; }
 .txbox.w2 { grid-column: span 2; }
 .txbox.h2 { grid-row: span 2; }
+.txbox.wf { grid-column: 1 / -1; }
+.txbox .chat-head { pointer-events: auto; cursor: grab; }
+.txbox.drag { opacity: .5; }
 .txbox .chat-log { flex: 1; min-height: 0; overflow-x: hidden; overflow-wrap: anywhere; overflow-anchor: none; }
 .txbox.sel { border-color: var(--orange); }
 .txbox.s-ended .chat-title { color: var(--dim); }
 .tx-input:disabled { cursor: not-allowed; }
 .txbox .chat-field .tk-btn { flex: none; }
 .tx-new { flex-wrap: wrap; }
-.tx-new input, .tx-new select { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--gray); border-radius: 6px; padding: 3px 8px; min-width: 0; }
+.tx-new input, .tx-new select, .tx-mode { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--gray); border-radius: 6px; padding: 3px 8px; min-width: 0; }
 .tx-new input[name=cwd] { width: 18em; }
 .tx-new .tx-first { flex: 1 1 14em; }
-.tx-new input:focus, .tx-new select:focus { outline: none; border-color: var(--orange); }
+.tx-new input:focus, .tx-new select:focus, .tx-mode:focus { outline: none; border-color: var(--orange); }
 .tx-ask { border-top: 1px dashed var(--orange); padding: 8px 0 6px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 6px; }
 .tx-ask[hidden] { display: none; }
 .tx-ask-q { overflow-wrap: anywhere; }
-.tx-plan { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .92em; color: var(--fg); border-left: 2px solid var(--orange); padding-left: 8px; }
+.tx-plan { max-height: 180px; overflow: auto; overflow-wrap: anywhere; font-size: .92em; color: var(--fg); border-left: 2px solid var(--orange); padding-left: 8px; }
 .tx-size { display: inline-flex; gap: 2px; flex: none; }
 .tx-size button { display: grid; place-items: center; padding: 3px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--dim); cursor: pointer; }
 .tx-size button:hover { color: var(--fg); }
@@ -470,3 +473,19 @@ kbd { font: inherit; color: var(--fg); }
 .tile-tx:hover { color: var(--orange); border-color: var(--gray); }
 .tile-tx:focus-visible { outline: 1px solid var(--orange); outline-offset: 1px; }
 .tile-tx path { fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+
+/* markdown in Claude's transcript messages and plans */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md table, .md blockquote { margin: 0 0 .5em; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: .6em 0 .3em; font-size: 1em; font-weight: 700; }
+.md h1, .md h2 { font-size: 1.1em; }
+.md ul, .md ol { padding-left: 1.4em; }
+.md code { font: .9em var(--mono); background: var(--ubg); border-radius: 4px; padding: 0 .3em; }
+.md pre { white-space: pre; overflow-x: auto; background: var(--ubg); border-radius: 6px; padding: 6px 8px; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 2px solid var(--dim); padding-left: 8px; color: var(--dim); }
+.md hr { border: 0; border-top: 1px solid var(--dim); opacity: .4; margin: .6em 0; }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: .92em; }
+.md th, .md td { border: 1px solid color-mix(in srgb, var(--dim) 40%, transparent); padding: 2px 8px; text-align: left; }
+.md a { color: var(--orange); }

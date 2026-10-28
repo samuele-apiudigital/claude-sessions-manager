@@ -403,7 +403,7 @@ def render(rows):
             cur = "\033[7m \033[27m" if FRAME // 3 % 2 == 0 else " "
             field = f"{ORANGE}{B}❯{Z} {FG}{B}{SEND[-(inner - 3):] if vw(SEND) > inner - 3 else SEND}{Z}{cur}"
         else:
-            ph = ({"owned": "enter: type to it · x " + ("stop" if t["sending"] else "close"), "type": f"enter: type to its {t['app']} tab",
+            ph = ({"owned": f"{t['perm']} · enter: type to it · m mode · x " + ("stop" if t["sending"] else "close"), "type": f"enter: type to its {t['app']} tab",
                 "resume": "enter: resume it in cs with a message"}.get(t["mode"])
                 or (f"runs in {t['app']}: f focuses it" if t["app"] else "no terminal: read-only"))
             field = f"{GRAY}❯{Z} {D}{clip(ph, inner - 2)}{Z}"
@@ -691,7 +691,7 @@ def chatlog(path):
     return log
 
 OWNED, OWN_LOCK = {}, threading.Lock()
-OWN_MODES = ("default", "plan", "acceptEdits")
+OWN_MODES = ("default", "plan", "acceptEdits", "bypassPermissions")
 
 def owned(sid):
     o = OWNED.get(sid)
@@ -717,6 +717,12 @@ def own_read(sid, o):
                 what=tool_line(dict(name=r.get("tool_name"), input=r.get("input"))))
         elif t == "control_cancel_request" and o["pend"] and o["pend"]["id"] == d.get("request_id"):
             o["pend"] = None
+        elif t == "control_response" and o["want"] and (d.get("response") or {}).get("request_id") == o["want"][0]:
+            r, (_, mode), o["want"] = d["response"], o["want"], None
+            if r.get("subtype") == "success": o["mode"] = mode
+            else: o["err"] = f"could not switch to {mode}: {r.get('error')}"[:200]
+        elif t == "system" and d.get("subtype") == "init" and d.get("permissionMode"):
+            o["mode"] = d["permissionMode"]
         elif t == "result":
             o["busy"], o["pend"] = False, None
             o["err"] = str(d.get("result") or d.get("subtype"))[:200] if d.get("is_error") else None
@@ -743,7 +749,7 @@ def own_start(cwd, sid=None, mode="default", text=""):
             proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=f, text=True, bufsize=1)
     except OSError as e:
         return None, f"cannot start claude: {e}"
-    o = OWNED[sid] = dict(p=proc, cwd=cwd, busy=False, pend=None, err=None, log=log, closed=False)
+    o = OWNED[sid] = dict(p=proc, cwd=cwd, busy=False, pend=None, err=None, log=log, closed=False, mode=mode, want=None)
     threading.Thread(target=own_read, args=(sid, o), daemon=True).start()
     if text.strip():
         o["busy"] = True
@@ -755,9 +761,19 @@ def own_answer(sid, allow, note=""):
     o = owned(sid)
     if not o or not o["pend"]: return "nothing to answer"
     pend, o["pend"] = o["pend"], None
+    # approving a plan leaves plan mode; the CLI doesn't report the switch until its next init
+    if allow and pend["tool"] == "ExitPlanMode" and o["mode"] == "plan": o["mode"] = "default"
     res = dict(behavior="allow", updatedInput=pend["input"]) if allow else dict(behavior="deny", message=note or "The user denied this.")
     return own_write(o, dict(type="control_response", response=dict(subtype="success", request_id=pend["id"], response=res))) or (
         f"allowed {pend['tool']}" if allow else f"denied {pend['tool']}" + (" with your reply" if note else ""))
+
+def own_mode(sid, mode):
+    import uuid
+    o = owned(sid)
+    if not o: return "this session isn't run by cs"
+    if mode not in OWN_MODES: return f"unknown permission mode: {mode}"
+    o["want"] = (str(uuid.uuid4()), mode)
+    return own_write(o, dict(type="control_request", request_id=o["want"][0], request=dict(subtype="set_permission_mode", mode=mode))) or f"permission mode: {mode}"
 
 def own_stop(sid):
     import uuid
@@ -778,7 +794,7 @@ def send_mode(r, info):
 def transcript_of(r, info):
     o = OWNED.get(r["sid"])
     pend = o and o["pend"] and dict(tool=o["pend"]["tool"], what=o["pend"]["what"], plan=o["pend"]["input"].get("plan") if o["pend"]["tool"] == "ExitPlanMode" else None)
-    return dict(log=chatlog(transcript(r["sid"]))[-60:], **send_mode(r, info), sending=bool(o and o["busy"] and not o["pend"]), err=o and o["err"], pend=pend)
+    return dict(log=chatlog(transcript(r["sid"]))[-60:], **send_mode(r, info), sending=bool(o and o["busy"] and not o["pend"]), err=o and o["err"], pend=pend, perm=owned(r["sid"]) and o["mode"])
 
 def session_send(r, text):
     text = text.strip()
@@ -1664,6 +1680,10 @@ def server(port):
                 msg = own_answer(sid, bool(body.get("allow"))) if u.path == "/api/session/answer" else own_stop(sid)
                 with lock: cache.clear()
                 return self.reply(200, {"msg": msg})
+            if u.path == "/api/session/mode":
+                msg = own_mode(str(body.get("sid") or ""), str(body.get("mode") or ""))
+                with lock: cache.clear()
+                return self.reply(200, {"msg": msg})
             if u.path == "/api/session/send":
                 sid = body.get("sid")
                 with lock:
@@ -1844,7 +1864,7 @@ else:
                 elif PSEARCH is not None:
                     hint = "\033[2m type to filter · ←→ select · enter " + ("start a session there" if PNEW else "open in VS Code") + " · esc close \033[0m"
                 elif INPUT is None and VIEW == "tx":
-                    hint = "\033[2m ←↑↓→ select · enter/click type · n new · s size · y/d answer · x stop · f focus · v tiles · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
+                    hint = "\033[2m ←↑↓→ select · enter/click type · n new · s size · y/d answer · m mode · x stop · f focus · v tiles · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 elif INPUT is None:
                     hint = "\033[2m ←↑↓→ select · enter/click focus · v transcripts · / chat · q quit · a " + ("hide ended" if show_all else "show ended") + " · r refresh" + (" · w " if WEB_URL else " ") + "\033[0m"
                 else:
@@ -1969,6 +1989,10 @@ else:
                             if not SEL: MSG = ("select a session with the arrow keys first", time.time())
                             elif k in "xX": MSG, last = (own_stop(SEL), time.time()), 0
                             else: MSG, last = (own_answer(SEL, k in "yY"), time.time()), 0
+                        elif k in ("m", "M") and VIEW == "tx":
+                            o = SEL and owned(SEL)
+                            MSG, last = (own_mode(SEL, OWN_MODES[(OWN_MODES.index(o["mode"]) + 1) % len(OWN_MODES)] if o["mode"] in OWN_MODES else "default")
+                                if o else "select a session run by cs first", time.time()), 0
                         elif k in ("f", "F") and VIEW == "tx":
                             row = next((x for x in data if x["sid"] == SEL), None)
                             MSG = (focus(row) if row else "select a session with the arrow keys first", time.time())

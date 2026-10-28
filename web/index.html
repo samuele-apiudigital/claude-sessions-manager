@@ -25,7 +25,7 @@
       <form class="tk-bar tx-new" id="txNew" autocomplete="off">
         <span class="dim">new session in</span>
         <input name="cwd" list="txDirs" placeholder="project folder" spellcheck="false" aria-label="Project folder" required>
-        <select name="mode" aria-label="Permission mode"><option value="default">ask before tools</option><option value="plan">plan first</option><option value="acceptEdits">accept edits</option></select>
+        <select name="mode" aria-label="Permission mode"><option value="default">ask before tools</option><option value="plan">plan first</option><option value="acceptEdits">accept edits</option><option value="bypassPermissions">skip all permissions</option></select>
         <input name="text" class="tx-first" placeholder="first message (optional)" spellcheck="false" aria-label="First message">
         <button type="submit" class="tk-btn primary">start</button>
         <datalist id="txDirs"></datalist>
@@ -130,15 +130,18 @@ let projSel = 0, projSig = "";
 let tab = ["tasks", "tx"].includes(store.get("cs.tab")) ? store.get("cs.tab") : "sessions";
 let tkShow = store.get("cs.tkshow") === "all" ? "all" : "open";
 let tkSel = null, tkCur = null, tkLoading = null, tkMode = null, tkSig = "", tkInfoSig = "", tkDlSig = "";
-let txSizes = {}, txScrollTo = null;
+let txSizes = {}, txOrder = [], txDrag = null, txScrollTo = null;
 try { txSizes = JSON.parse(store.get("cs.txsize") || "{}") || {}; } catch {}
-const TX_SIZES = ["1x1", "2x1", "2x2"];
+try { txOrder = JSON.parse(store.get("cs.txorder") || "[]") || []; } catch {}
+const TX_SIZES = ["1x1", "2x1", "2x2", "full", "full2"];
+const txSizeName = z => z === "full" ? "full width" : z === "full2" ? "full width, 2 rows" : `${z.replace("x", "×")} (columns × rows)`;
 const CHAT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3.5 2.5v-2.5H2.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path d="M4.5 5.5h7M4.5 8h4.5"/></svg>`;
-// a 2×2 grid with the cells the size covers filled in
+// a 2×2 grid with the cells the size covers filled in; full width is one bar across the top (both rows for full2)
 const txIcon = z => {
   const [w, h] = z.split("x").map(Number);
-  let r = "";
-  for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) r += `<rect x="${1 + x * 7}" y="${1 + y * 7}" width="5" height="5" rx="1"${x < w && y < h ? ` class="on"` : ""}/>`;
+  const bar = { full: 1, full2: 2 }[z] || 0;
+  let r = bar ? `<rect x="1" y="1" width="12" height="${bar * 7 - 2}" rx="1" class="on"/>` : "";
+  for (let y = bar; y < 2; y++) for (let x = 0; x < 2; x++) r += `<rect x="${1 + x * 7}" y="${1 + y * 7}" width="5" height="5" rx="1"${x < w && y < h ? ` class="on"` : ""}/>`;
   return `<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">${r}</svg>`;
 };
 let mailOpen = false, mailData = null, mailKey = "", mailSig = "", scanSig = "";
@@ -161,6 +164,45 @@ const PRIO = { high: 0, medium: 1, low: 2 };
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const one = s => String(s ?? "").split(/\s+/).filter(Boolean).join(" ");
+// escapes first, so only the tags made here reach the page
+const mdInline = t => esc(t).split(/`([^`\n]+)`/).map((p, i) => i % 2 ? `<code>${p}</code>` : p
+  .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+  .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?![*\w])/g, "$1<i>$2</i>")
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, `<a href="$2" target="_blank" rel="noopener">$1</a>`)).join("");
+// shortcut: no nested lists or inline html, swap for a real parser if transcripts show raw markup
+function md(src) {
+  const L = String(src ?? "").split("\n"), out = [];
+  let para = [], list = null, m;
+  const endP = () => { if (para.length) out.push(`<p>${para.map(mdInline).join("<br>")}</p>`); para = []; };
+  const endL = () => { if (list) out.push(`</${list}>`); list = null; };
+  for (let i = 0; i < L.length; i++) {
+    const l = L[i];
+    if (/^\s*```/.test(l)) {
+      endP(); endL();
+      const code = [];
+      while (++i < L.length && !/^\s*```/.test(L[i])) code.push(L[i]);
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+    } else if (/^\s*\|/.test(l)) {
+      endP(); endL();
+      const rows = [];
+      for (; i < L.length && /^\s*\|/.test(L[i]); i++) rows.push(L[i].trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim()));
+      i--;
+      out.push(`<table>${rows.filter(r => !r.every(c => /^:?-+:?$/.test(c)))
+        .map((r, j) => `<tr>${r.map(c => j ? `<td>${mdInline(c)}</td>` : `<th>${mdInline(c)}</th>`).join("")}</tr>`).join("")}</table>`);
+    } else if ((m = l.match(/^(#{1,6})\s+(.*)/))) { endP(); endL(); out.push(`<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`); }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { endP(); endL(); out.push("<hr>"); }
+    else if ((m = l.match(/^\s*(?:([-*+])|\d+[.)])\s+(.*)/))) {
+      endP();
+      const t = m[1] ? "ul" : "ol";
+      if (list !== t) { endL(); out.push(`<${t}>`); list = t; }
+      out.push(`<li>${mdInline(m[2])}</li>`);
+    } else if ((m = l.match(/^>\s?(.*)/))) { endP(); endL(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); }
+    else if (!l.trim()) { endP(); endL(); }
+    else { endL(); para.push(l); }
+  }
+  endP(); endL();
+  return out.join("");
+}
 const p2 = n => String(n).padStart(2, "0");
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
 const nowS = () => Date.now() / 1000;
@@ -340,7 +382,8 @@ function msgsHTML(log) {
       out += `<div class="msg tool"><span class="g">⎿</span><span class="t" title="${esc(cmd)}">${esc(cmd)}</span></div>`;
     } else {
       const g = kind === "you" ? "›" : kind === "claude" ? "⏺" : "✗";
-      out += `<div class="msg ${kind === "you" || kind === "claude" ? kind : "err"}"><span class="g">${g}</span><span>${esc(one(text))}</span></div>`;
+      out += `<div class="msg ${kind === "you" || kind === "claude" ? kind : "err"}"><span class="g">${g}</span>`
+        + (kind === "claude" ? `<div class="md">${md(text)}</div></div>` : `<span>${esc(one(text))}</span></div>`);
     }
   }
   return out;
@@ -366,7 +409,9 @@ function renderTx() {
   if (tab !== "tx") return;
   const dirs = (S.projects || []).map(p => p.path), dsig = dirs.join("\n");
   if ($("txDirs")._sig !== dsig) { $("txDirs").replaceChildren(...dirs.map(d => new Option(home(d), home(d)))); $("txDirs")._sig = dsig; }
-  const rows = S.sessions.filter(r => r.tx);
+  const rank = r => { const i = txOrder.indexOf(r.sid); return i < 0 ? 1e9 : i; };
+  // boxes you never moved keep the server order, after the ones you did
+  const rows = S.sessions.filter(r => r.tx).sort((a, b) => rank(a) - rank(b));
   const old = new Map([...box.children].map(el => [el.dataset.sid, el]));
   const cols = getComputedStyle(box).gridTemplateColumns.split(" ").filter(Boolean).length;
   let prev = null;
@@ -376,22 +421,23 @@ function renderTx() {
     if (!el) {
       el = document.createElement("article");
       el.dataset.sid = r.sid;
-      el.innerHTML = `<div class="chat-head"><span class="chat-title"></span><span class="chat-side"></span></div><div class="chat-log"></div>`
+      el.innerHTML = `<div class="chat-head" draggable="true"><span class="chat-title"></span><span class="chat-side"></span></div><div class="chat-log"></div>`
         + `<div class="tx-ask" hidden></div>`
         + `<div class="chat-field"><span class="p">❯</span><input class="tx-input" autocomplete="off" spellcheck="false">`
-        + `<span class="tx-size" role="group" aria-label="Box size">${TX_SIZES.map(z => `<button type="button" data-size="${z}" title="${z.replace("x", "×")} (columns × rows)" aria-label="size ${z.replace("x", " by ")}">${txIcon(z)}</button>`).join("")}</span>`
+        + `<span class="tx-size" role="group" aria-label="Box size">${TX_SIZES.map(z => `<button type="button" data-size="${z}" title="${txSizeName(z)}" aria-label="size ${txSizeName(z)}">${txIcon(z)}</button>`).join("")}</span>`
+        + `<select class="tx-mode" aria-label="Permission mode" title="permission mode">${$("txNew").elements.mode.innerHTML}</select>`
         + `<button type="button" class="tk-btn" data-act="stop"></button><button type="button" class="tk-btn" data-act="focus">focus</button></div>`;
     }
     const [label, cls] = stateOf(r), t = r.tx;
     const size = txSizes[r.sid] || "1x1";
-    el.className = `chat txbox ${cls}${r.sid === sel ? " sel" : ""}${el.contains(document.activeElement) ? " on" : ""}`
-      + (size !== "1x1" && cols > 1 ? " w2" : "") + (size === "2x2" ? " h2" : "");
+    el.className = `chat txbox ${cls}${r.sid === sel ? " sel" : ""}${el.contains(document.activeElement) ? " on" : ""}${r.sid === txDrag ? " drag" : ""}`
+      + (size.startsWith("full") ? " wf" : size !== "1x1" && cols > 1 ? " w2" : "") + (size === "2x2" || size === "full2" ? " h2" : "");
     for (const b of el.querySelectorAll("[data-size]")) b.setAttribute("aria-pressed", String(b.dataset.size === size));
     const tk = (S.tasks?.list || []).find(x => x.session_id === r.sid);
     const title = (tk ? `task #${tk.id} · ` : "") + (r.name || r.sid.slice(0, 8));
     const side = `${label.toLowerCase()} · ${String(r.cwd).replace(/\/+$/, "").split("/").pop()}${t.app ? ` · ${t.app}` : ""}`;
     const hd = el.querySelector(".chat-head");
-    if (hd._sig !== title + side) { hd.children[0].textContent = `✻ ${title}`; hd.children[1].textContent = side; hd.title = r.sid; hd._sig = title + side; }
+    if (hd._sig !== title + side) { hd.children[0].textContent = `✻ ${title}`; hd.children[1].textContent = side; hd.title = `${r.sid} · drag to reorder (or shift+←/→)`; hd._sig = title + side; }
     const lg = el.querySelector(".chat-log");
     const sig = JSON.stringify([t.log, t.sending, t.err, r.status]);
     if (lg._sig !== sig) {
@@ -404,7 +450,7 @@ function renderTx() {
     if (ask._sig !== asig) {
       ask.hidden = !t.pend;
       ask.innerHTML = !t.pend ? "" : (t.pend.plan != null
-        ? `<div class="tx-ask-q"><b class="tk-you">◆ the plan waits for you</b></div><div class="tx-plan">${esc(t.pend.plan)}</div>`
+        ? `<div class="tx-ask-q"><b class="tk-you">◆ the plan waits for you</b></div><div class="tx-plan md">${md(t.pend.plan)}</div>`
         : `<div class="tx-ask-q"><b class="tk-you">◆ allow ${esc(t.pend.tool)}?</b> <span class="dim">${esc(one(t.pend.what))}</span></div>`)
         + `<div class="tk-acts"><button type="button" class="tk-btn primary" data-act="allow">${t.pend.plan != null ? "approve" : "allow"}</button><button type="button" class="tk-btn" data-act="deny">deny</button></div>`;
       ask._sig = asig;
@@ -413,6 +459,9 @@ function renderTx() {
     inp.disabled = t.mode === "none";
     inp.placeholder = txPlaceholder(r);
     inp.setAttribute("aria-label", `Message to ${title}`);
+    const mode = el.querySelector(".tx-mode");
+    mode.hidden = !t.perm;
+    if (t.perm && document.activeElement !== mode) mode.value = t.perm;
     const stop = el.querySelector("[data-act=stop]");
     stop.hidden = t.mode !== "owned";
     stop.textContent = t.sending ? "stop" : "close";
@@ -432,6 +481,17 @@ function renderTx() {
 function txResize(sid, size) {
   if (size === "1x1") delete txSizes[sid]; else txSizes[sid] = size;
   store.set("cs.txsize", JSON.stringify(txSizes));
+  render();
+  document.querySelector(`.txbox[data-sid="${CSS.escape(sid)}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+// moves a box to index `to` of the shown order and remembers that order
+function txMove(sid, to) {
+  const ids = [...$("txs").children].map(el => el.dataset.sid), from = ids.indexOf(sid);
+  if (from < 0 || to < 0 || to >= ids.length || to === from) return;
+  ids.splice(to, 0, ids.splice(from, 1)[0]);
+  txOrder = ids;
+  store.set("cs.txorder", JSON.stringify(ids));
   render();
   document.querySelector(`.txbox[data-sid="${CSS.escape(sid)}"]`)?.scrollIntoView({ block: "nearest" });
 }
@@ -865,7 +925,7 @@ function renderHint() {
     : document.activeElement?.closest?.("#tkForm") ? "enter saves (⌘/ctrl-enter in the description) · esc cancels"
     : document.activeElement === $("tkNote") ? "enter saves the note · esc leaves"
     : document.activeElement?.classList?.contains("tx-input") ? "enter send · esc leave · ctrl-u clear line"
-    : tab === "tx" ? `1 sessions · 2 tasks · ←↑↓→ select · enter type · n new session · s size · f focus · a ${showAll ? "hide ended" : "show ended"} · / chat · r refresh`
+    : tab === "tx" ? `1 sessions · 2 tasks · ←↑↓→ select · enter type · n new session · s size · shift+←→ move · f focus · a ${showAll ? "hide ended" : "show ended"} · / chat · r refresh`
     : tab === "tasks" ? `1 sessions · ↑↓ select · n new task · e edit · esc close · a ${tkShow === "all" ? "open only" : "show all"} · s scan inbox · m inbox log · / chat · r refresh`
     : `←↑↓→ select · enter/click focus · 2 tasks · 3 transcripts · / chat · p projects · a ${showAll ? "hide ended" : "show ended"} · t ${view === "tiles" ? "table" : "tiles"} · r refresh${installPrompt ? " · i install app" : ""}`;
   let h = esc(keys);
@@ -976,7 +1036,7 @@ async function send(text) {
 function move(key) {
   const rows = S?.sessions || [];
   if (!rows.length) return;
-  const ids = rows.map(r => r.sid);
+  const ids = tab === "tx" ? [...$("txs").children].map(el => el.dataset.sid) : rows.map(r => r.sid);
   let cur = ids.indexOf(sel);
   let per = 1;
   if (tab === "tx" || view === "tiles") {
@@ -998,6 +1058,7 @@ document.addEventListener("keydown", e => {
     if (k === "Enter") { e.preventDefault(); document.querySelector(`.txbox[data-sid="${CSS.escape(sel || "")}"] input`)?.focus(); return; }
     if (k === "f" || k === "F") { e.preventDefault(); focusSel(); return; }
     if (k === "n" || k === "N") { e.preventDefault(); $("txNew").elements.cwd.focus(); return; }
+    if (e.shiftKey && (k === "ArrowLeft" || k === "ArrowRight") && sel) { e.preventDefault(); const ids = [...$("txs").children].map(el => el.dataset.sid); txMove(sel, ids.indexOf(sel) + (k === "ArrowRight" ? 1 : -1)); return; }
     if ((k === "s" || k === "S") && sel) { e.preventDefault(); txResize(sel, TX_SIZES[(TX_SIZES.indexOf(txSizes[sel] || "1x1") + 1) % TX_SIZES.length]); return; }
     if (k === " " || k === "t" || k === "T") return;
   }
@@ -1105,6 +1166,25 @@ $("txs").addEventListener("click", e => {
   else if (act === "allow" || act === "deny") txAct("/api/session/answer", { sid: sel, allow: act === "allow" });
   else if (act === "stop") txAct("/api/session/stop", { sid: sel });
   else render();
+});
+$("txs").addEventListener("dragstart", e => {
+  const b = e.target.closest?.(".txbox");
+  if (!b) return;
+  txDrag = sel = b.dataset.sid;
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", txDrag);
+  render();
+});
+$("txs").addEventListener("dragover", e => { if (txDrag && e.target.closest(".txbox")) e.preventDefault(); });
+$("txs").addEventListener("drop", e => {
+  const b = e.target.closest(".txbox");
+  if (!txDrag || !b) return;
+  e.preventDefault();
+  txMove(txDrag, [...$("txs").children].indexOf(b));
+});
+$("txs").addEventListener("dragend", () => { txDrag = null; render(); });
+$("txs").addEventListener("change", e => {
+  if (e.target.matches(".tx-mode")) txAct("/api/session/mode", { sid: e.target.closest(".txbox").dataset.sid, mode: e.target.value });
 });
 $("txNew").addEventListener("submit", async e => {
   e.preventDefault();
