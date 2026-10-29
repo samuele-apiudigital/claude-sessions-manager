@@ -1,6 +1,6 @@
 {
   "projects": "~/Projects",
-  "theme": "claude",
+  "theme": "dracula",
   "themes": [
     {
       "id": "terminal",
@@ -20,5 +20,6 @@
   ],
   "inbox": {
     "every": 60
-  }
+  },
+  "terminal": "cs"
 }
