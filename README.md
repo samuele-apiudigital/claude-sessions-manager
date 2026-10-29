@@ -203,6 +203,7 @@ Enter sends. Where the message goes depends on the session:
 | ended                        | resumes it as a session run by cs, with your message                           |
 | live in Terminal or iTerm2   | typed into its tab (found by tty), as if you typed it there                    |
 | live in Warp, VS Code, other | read-only: those apps can't be typed into from outside, `f`/`focus` brings it up |
+| ThinkRail chat               | read-only: ThinkRail owns the chat, `f`/`focus` brings ThinkRail up            |
 
 Each box can be resized: the three box icons next to its input (or `s` on the selected box) pick 1×1, 2×1, 2×2 (columns ×
 rows of the grid), full width, or full width and 2 rows tall. The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
@@ -231,6 +232,15 @@ served by another `cs`, start them from the one you use.
 
 Typed messages to Terminal and iTerm2 are sent as one line (newlines become spaces, since a newline would
 submit early). Sending to them asks macOS once to let the dashboard control that app.
+
+### ThinkRail
+
+Chats in [ThinkRail](https://github.com/samuele-apiudigital/thinkrail-cli-claude-code) that use its Claude Code
+provider show up as sessions too: each turn runs `claude -p` with the chat's id, so cs matches the Claude
+transcript to the pi session in `~/.pi/agent/sessions` (`$CS_PI_SESSIONS`). They take the chat's title (or its
+first message) and, for workspace worktrees, the project's name instead of the workspace folder. Between turns
+no `claude` process runs, so while ThinkRail is open a chat used in the last day shows as waiting; when
+ThinkRail is closed they show as ended. Chats with other providers don't use Claude Code and don't appear.
 
 ## Chat
 
@@ -290,6 +300,7 @@ and `extras/com.user.claude-sessions.plist` to `~/Library/LaunchAgents/`, then
 
 - live sessions: `~/.claude/sessions/*.json`
 - transcripts: `~/.claude/projects/*/<sessionId>.jsonl`
+- ThinkRail chats: `~/.pi/agent/sessions/*/<time>_<sessionId>.jsonl`
 - agents: `~/.claude/projects/*/<sessionId>/subagents/` (agent transcripts, workflow journals)
 - limits: `~/.claude/state/rate-limits.json`
 - recent projects: dates of the history folders in `~/.claude/projects/`

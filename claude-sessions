@@ -70,6 +70,44 @@ def transcript(sid):
     m = glob.glob(f"{HOME}/projects/*/{sid}.jsonl")
     return m[0] if m else None
 
+TR_HOME = os.path.expanduser("~/.thinkrail")
+PI_SESSIONS = os.path.expanduser(os.environ.get("CS_PI_SESSIONS") or "~/.pi/agent/sessions")
+TR_TITLES = {}
+
+def tr_chats():
+    # ThinkRail keeps each chat as a pi session <time>_<id>.jsonl, and its claude-code turns run `claude --session-id <id>`
+    chats = {}
+    for p in glob.glob(f"{PI_SESSIONS}/*/*_*.jsonl"):
+        try: m = os.path.getmtime(p)
+        except OSError: continue
+        if TR_TITLES.get(p, (None,))[0] != m:
+            title = first = ""
+            try:
+                for ln in open(p, encoding="utf-8"):
+                    if '"session_info"' not in ln and (first or '"user"' not in ln): continue
+                    try: d = json.loads(ln)
+                    except ValueError: continue
+                    if d.get("type") == "session_info": title = d.get("name") or title
+                    elif d.get("type") == "message" and (d.get("message") or {}).get("role") == "user":
+                        c = d["message"].get("content")
+                        first = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c or [] if isinstance(x, dict))
+            except OSError: continue
+            TR_TITLES[p] = (m, " ".join((title or first).split())[:80])
+        chats[os.path.basename(p)[:-6].split("_", 1)[1]] = TR_TITLES[p][1]
+    return chats
+
+def tr_app(info):
+    # the running ThinkRail bundle (ThinkRail.app, ThinkRail-dev.app...) and its name
+    for _, _, cmd in info.values():
+        m = re.match(r"(.*?/(ThinkRail[^/]*)\.app)/Contents/MacOS/", cmd)
+        if m: return m.group(1), m.group(2)
+    return None, None
+
+def proj_of(cwd):
+    # ThinkRail worktrees live in ~/.thinkrail/worktrees/<project>/<workspace>
+    if cwd.startswith(f"{TR_HOME}/worktrees/"): return cwd[len(TR_HOME) + 11:].split("/")[0]
+    return os.path.basename(cwd.rstrip("/")) or cwd
+
 def stats(path):
     s = dict(model="-", ctx=0, peak=0, turns=0, out=0, inp=0, cread=0, ccreate=0, tools=0, hist=[], title="", branch="", wd="", ultra=False, prompt="", cur_task="", done_task="", subjects=None, ncreate=0, first=None, last=None, agents=[])
     s["subjects"] = {}
@@ -236,17 +274,30 @@ def collect(ended=None):
             name=st["title"] or d.get("name"), cwd=st["wd"] or d.get("cwd", ""), kind=d.get("kind", ""),
             entry=d.get("entrypoint", ""), version=d.get("version", ""), started=d.get("startedAt", 0),
             updated=d.get("updatedAt", 0), uptime=etime(pid) if live else "-", **st))
+    def add(p, sid, live):
+        st = stats(p)
+        if st["wd"] == CHAT_DIR: return
+        seen.add(sid)
+        agent_detail(p, st["agents"], False, 0)
+        mt = int(os.path.getmtime(p) * 1000)
+        rows.append(dict(sid=sid, pid=None, live=live, status="idle" if live else "ended", name=st["title"],
+            cwd=st["wd"] or os.path.basename(os.path.dirname(p)), kind="", entry="", version="", started=mt if live else 0,
+            updated=mt, uptime="-", **st))
+    cutoff = time.time() - 86400
+    chats = tr_chats()
+    tr_name = tr_app(ps_info())[1] if chats else None
+    if tr_name:
+        # between turns no claude process runs, so a chat used in the last day waits while ThinkRail is open
+        for sid in chats:
+            p = sid not in seen and transcript(sid)
+            if p and os.path.getmtime(p) >= cutoff: add(p, sid, True)
     if ended:
-        cutoff = time.time() - 86400
         for p in glob.glob(f"{HOME}/projects/*/*.jsonl"):
             sid = os.path.basename(p)[:-6]
-            if sid in seen or os.path.getmtime(p) < cutoff: continue
-            st = stats(p)
-            if st["wd"] == CHAT_DIR: continue
-            agent_detail(p, st["agents"], False, 0)
-            rows.append(dict(sid=sid, pid=None, live=False, status="ended", name=st["title"],
-                cwd=st["wd"] or os.path.basename(os.path.dirname(p)), kind="", entry="", version="", started=0,
-                updated=int(os.path.getmtime(p)*1000), uptime="-", **st))
+            if sid not in seen and os.path.getmtime(p) >= cutoff: add(p, sid, False)
+    for r in rows:
+        r["proj"] = proj_of(r["cwd"])
+        if r["sid"] in chats: r["tr"], r["name"] = tr_name or "ThinkRail", chats[r["sid"]] or r["name"]
     rows.sort(key=lambda r: (not r["live"], r["started"] if r["live"] else 0, -r["updated"]))
     return rows
 
@@ -271,7 +322,7 @@ def render_table(rows):
         col = R if pct >= 85 else Y if pct >= 60 else G
         bar = f"{col}{'█'*fill}{D}{'░'*(n-fill)}{Z} {fmt(r['ctx']):>5} {pct:3.0f}%"
         sc = G if r["status"] == "busy" else Y if r["status"] == "idle" else D
-        proj = os.path.basename(r["cwd"].rstrip("/")) or r["cwd"]
+        proj = r["proj"]
         nag = agent_counts(r)[1]
         label = f"{r['name'] or r['title'] or r['sid'][:8]} {D}[{proj}]{Z}" + (f" {Y}· {nag} agent{'s' if nag != 1 else ''}{Z}" if nag else "")
         pid = str(r["pid"] or "-")
@@ -394,7 +445,7 @@ def render(rows):
             ask = [f"{AMBER}{'┄' * inner}{Z}"] + ask
         room = max(1, bh - 4 - len(ask))
         log = [""] * (room - len(log[-room:])) + log[-room:] + ask
-        side = clip(f"{label.lower()} · {os.path.basename(r['cwd'].rstrip('/'))}" + (f" · {t['app']}" if t["app"] else ""), max(8, inner // 2))
+        side = clip(f"{label.lower()} · {r['proj']}" + (f" · {t['app']}" if t["app"] else ""), max(8, inner // 2))
         title = clip(f"✻ {r['name'] or r['sid'][:8]}", max(4, W - 8 - vw(side)))
         fill = HZ * max(0, W - 8 - vw(title) - vw(side))
         out = [f"{bd}{TL}{HZ}{Z} {ORANGE}{B}{title}{Z} {bd}{fill}{Z} {D}{side}{Z} {bd}{HZ}{TR}{Z}"]
@@ -488,7 +539,7 @@ def render(rows):
         w = WINDOW or (1_000_000 if r["peak"] > 200_000 else 200_000)
         pct = min(100.0, r["ctx"] / w * 100)
         bc = RED if pct >= 85 else AMBER if pct >= 60 else sc if r["status"] != "ended" else GRAY
-        proj = os.path.basename(r["cwd"].rstrip("/")) or r["cwd"]
+        proj = r["proj"]
         ent = {"claude-vscode": "VS Code", "cli": "CLI"}.get(r["entry"], r["entry"] or "")
         tag = clip(f"#{r['pid']}" + (f" · {ent}" if ent else "") if r["pid"] else "transcript", W - 8)
         bd = sc if r["status"] != "ended" else GRAY
@@ -610,6 +661,11 @@ def term_of(r, info):
 def focus(r):
     pid = r.get("pid")
     if owned(r["sid"]): return "this session runs inside cs: open it in transcripts (v in the TUI, 3 on the web)"
+    if r.get("tr"):
+        bundle = tr_app(ps_info())[0]
+        if not bundle: return "ThinkRail is not running"
+        _run(["open", bundle], timeout=8)
+        return f"focused {r['tr']}"
     if not (r.get("live") and pid): return "session not running"
     info = ps_info()
     if not info: return "ps failed"
@@ -787,6 +843,8 @@ def own_stop(sid):
 
 def send_mode(r, info):
     if owned(r["sid"]): return dict(mode="owned", app="cs")
+    # ThinkRail owns the chat: a turn sent from here would never show in its chat view
+    if r.get("tr"): return dict(mode="none", app=r["tr"])
     if not r.get("live"): return dict(mode="resume", app=None)
     app, dev = term_of(r, info)
     return dict(mode="type" if dev and (app == "Terminal" or (app or "").startswith("iTerm")) else "none", app=app)

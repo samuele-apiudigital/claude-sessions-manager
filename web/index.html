@@ -318,7 +318,7 @@ function tableHTML(rows) {
     const pct = r.ctx / win(r) * 100;
     const c = pct >= 85 ? "var(--red)" : pct >= 60 ? "var(--amber)" : "var(--green)";
     const sc = r.status === "busy" ? "var(--green)" : r.status === "idle" ? "var(--amber)" : "var(--dim)";
-    const proj = String(r.cwd).replace(/\/+$/, "").split("/").pop() || r.cwd;
+    const proj = r.proj;
     const nag = agentCounts(r).nrun;
     h += `<tr data-sid="${esc(r.sid)}"${r.sid === sel ? ` class="sel"` : ""}><td>${esc(r.pid || "-")}</td><td style="color:${sc}">${esc(r.status)}</td>`
       + `<td>${meter(pct, 10, c)} ${fmt(r.ctx).padStart(5, " ")} ${pct.toFixed(0).padStart(3, " ")}%</td>`
@@ -435,7 +435,7 @@ function renderTx() {
     for (const b of el.querySelectorAll("[data-size]")) b.setAttribute("aria-pressed", String(b.dataset.size === size));
     const tk = (S.tasks?.list || []).find(x => x.session_id === r.sid);
     const title = (tk ? `task #${tk.id} · ` : "") + (r.name || r.sid.slice(0, 8));
-    const side = `${label.toLowerCase()} · ${String(r.cwd).replace(/\/+$/, "").split("/").pop()}${t.app ? ` · ${t.app}` : ""}`;
+    const side = `${label.toLowerCase()} · ${r.proj}${t.app ? ` · ${t.app}` : ""}`;
     const hd = el.querySelector(".chat-head");
     if (hd._sig !== title + side) { hd.children[0].textContent = `✻ ${title}`; hd.children[1].textContent = side; hd.title = `${r.sid} · drag to reorder (or shift+←/→)`; hd._sig = title + side; }
     const lg = el.querySelector(".chat-log");
