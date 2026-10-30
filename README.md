@@ -1,13 +1,66 @@
 # claude-sessions
 
 A full-screen terminal dashboard for your running Claude Code sessions (macOS), also served
-as a web page. One tile per session with status, context usage, model, tokens, working directory,
+as a web page. Read and reply to every session from one screen in the [transcripts](#transcripts)
+view, one chat box per session. One tile per session with status, context usage, model, tokens, working directory,
 git branch, current task, the session's subagents and workflows, plus a usage-limit bar, a
 projects bar that opens repos in VS Code, and a chat with a small Claude that acts for you.
 
 ▶ [Watch the demo video](assets/demo.mp4) (54s)
 
 ![Sessions](assets/sessions.png)
+
+## Transcripts
+
+The transcripts view (`v` in the TUI, `3` or the `transcripts` tab on the web) shows one chat box per
+session: its conversation read from the transcript (your messages, Claude's replies and its tool calls,
+without subagents) with an input line at the bottom. Select a box and press Enter (or click it) to type;
+Enter sends. Where the message goes depends on the session:
+
+| Session                      | Sending                                                                        |
+|------------------------------|--------------------------------------------------------------------------------|
+| run by cs                    | straight to it, see below                                                      |
+| ended                        | resumes it as a session run by cs, with your message                           |
+| live in Terminal or iTerm2   | typed into its tab (found by tty), as if you typed it there                    |
+| live in Warp, VS Code, other | read-only: those apps can't be typed into from outside, `f`/`focus` brings it up |
+| ThinkRail chat               | read-only: ThinkRail owns the chat, `f`/`focus` brings ThinkRail up            |
+
+Each box can be resized: the three box icons next to its input (or `s` on the selected box) pick 1×1, 2×1, 2×2 (columns ×
+rows of the grid), full width, or full width and 2 rows tall. The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
+beside a big one. When the grid has a single column, a 2-column box stays 1 column wide. The web remembers
+sizes per session in the browser; the TUI keeps them until it quits. In the web, drag a box by its title (or
+`shift+←`/`shift+→` on the selected box) to reorder; the order is remembered in the browser.
+
+![Transcripts](assets/transcripts.png)
+
+### Sessions run by cs
+
+`cs` can run sessions itself, with no terminal: `claude -p` in stream-json mode, with its permission
+prompts sent to the dashboard (`--permission-prompt-tool stdio`). Start one with `new session in` above
+the boxes on the web (folder, permission mode, optional first message), or `n` in the TUI (pick the
+folder in the projects search). Task sessions can run this way too: pick `dashboard (cs)` in the Tasks
+bar's `sessions in`, and Analyze starts the session in plan mode inside cs.
+
+When Claude asks to use a tool, or posts a plan, the box shows it with `allow`/`approve` and `deny`
+(`y` and `d` in the TUI). Typing a reply instead denies it with your message, which is how you comment
+on a plan. `stop` (`x`) interrupts the current turn; on an idle session it becomes `close`, which ends
+the process so you can resume the session anywhere.
+
+These sessions are child processes of the `cs` that started them: quitting that `cs` ends them (they show
+as ended and resume from their box). Only that `cs` can drive them, so if the TUI links to a web view
+served by another `cs`, start them from the one you use.
+
+Typed messages to Terminal and iTerm2 are sent as one line (newlines become spaces, since a newline would
+submit early). Sending to them asks macOS once to let the dashboard control that app.
+
+### ThinkRail
+
+Chats in [ThinkRail](https://github.com/samuele-apiudigital/thinkrail-cli-claude-code) that use its Claude Code
+provider show up as sessions too: each turn runs `claude -p` with the chat's id, so cs matches the Claude
+transcript to the pi session in `~/.pi/agent/sessions` (`$CS_PI_SESSIONS`). They take the chat's title (or its
+first message) and, for workspace worktrees, the project's name instead of the workspace folder. Between turns
+no `claude` process runs, so while ThinkRail is open a chat used in the last day shows as waiting; when
+ThinkRail is closed they show as ended. Chats with other providers don't use Claude Code and don't appear.
 
 ## Install
 
@@ -189,58 +242,6 @@ Gmail. The scan learns from your corrections, which it reads as examples on ever
 - changing an email task's project tells later scans where mail like it belongs.
 
 ![Inbox log](assets/inbox-log.png)
-
-## Transcripts
-
-The transcripts view (`v` in the TUI, `3` or the `transcripts` tab on the web) shows one chat box per
-session: its conversation read from the transcript (your messages, Claude's replies and its tool calls,
-without subagents) with an input line at the bottom. Select a box and press Enter (or click it) to type;
-Enter sends. Where the message goes depends on the session:
-
-| Session                      | Sending                                                                        |
-|------------------------------|--------------------------------------------------------------------------------|
-| run by cs                    | straight to it, see below                                                      |
-| ended                        | resumes it as a session run by cs, with your message                           |
-| live in Terminal or iTerm2   | typed into its tab (found by tty), as if you typed it there                    |
-| live in Warp, VS Code, other | read-only: those apps can't be typed into from outside, `f`/`focus` brings it up |
-| ThinkRail chat               | read-only: ThinkRail owns the chat, `f`/`focus` brings ThinkRail up            |
-
-Each box can be resized: the three box icons next to its input (or `s` on the selected box) pick 1×1, 2×1, 2×2 (columns ×
-rows of the grid), full width, or full width and 2 rows tall. The other boxes reflow to fill the gaps, so a smaller box later in the list can move up
-beside a big one. When the grid has a single column, a 2-column box stays 1 column wide. The web remembers
-sizes per session in the browser; the TUI keeps them until it quits. In the web, drag a box by its title (or
-`shift+←`/`shift+→` on the selected box) to reorder; the order is remembered in the browser.
-
-![Transcripts](assets/transcripts.png)
-
-### Sessions run by cs
-
-`cs` can run sessions itself, with no terminal: `claude -p` in stream-json mode, with its permission
-prompts sent to the dashboard (`--permission-prompt-tool stdio`). Start one with `new session in` above
-the boxes on the web (folder, permission mode, optional first message), or `n` in the TUI (pick the
-folder in the projects search). Task sessions can run this way too: pick `dashboard (cs)` in the Tasks
-bar's `sessions in`, and Analyze starts the session in plan mode inside cs.
-
-When Claude asks to use a tool, or posts a plan, the box shows it with `allow`/`approve` and `deny`
-(`y` and `d` in the TUI). Typing a reply instead denies it with your message, which is how you comment
-on a plan. `stop` (`x`) interrupts the current turn; on an idle session it becomes `close`, which ends
-the process so you can resume the session anywhere.
-
-These sessions are child processes of the `cs` that started them: quitting that `cs` ends them (they show
-as ended and resume from their box). Only that `cs` can drive them, so if the TUI links to a web view
-served by another `cs`, start them from the one you use.
-
-Typed messages to Terminal and iTerm2 are sent as one line (newlines become spaces, since a newline would
-submit early). Sending to them asks macOS once to let the dashboard control that app.
-
-### ThinkRail
-
-Chats in [ThinkRail](https://github.com/samuele-apiudigital/thinkrail-cli-claude-code) that use its Claude Code
-provider show up as sessions too: each turn runs `claude -p` with the chat's id, so cs matches the Claude
-transcript to the pi session in `~/.pi/agent/sessions` (`$CS_PI_SESSIONS`). They take the chat's title (or its
-first message) and, for workspace worktrees, the project's name instead of the workspace folder. Between turns
-no `claude` process runs, so while ThinkRail is open a chat used in the last day shows as waiting; when
-ThinkRail is closed they show as ended. Chats with other providers don't use Claude Code and don't appear.
 
 ## Chat
 
