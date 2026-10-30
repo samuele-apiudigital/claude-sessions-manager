@@ -6,9 +6,9 @@ view, one chat box per session. One tile per session with status, context usage,
 git branch, current task, the session's subagents and workflows, plus a usage-limit bar, a
 projects bar that opens repos in VS Code, and a chat with a small Claude that acts for you.
 
-▶ [Watch the demo video](assets/demo.mp4) (54s)
+![Demo](assets/demo.gif)
 
-![Sessions](assets/sessions.png)
+▶ [Watch the demo video](assets/demo.mp4) (23s)
 
 ## Transcripts
 
